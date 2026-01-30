@@ -1,0 +1,17 @@
+repos:
+  - repo: local
+    hooks:
+      - id: generate-cursor-rules
+        name: Generate Cursor rules from skills
+        language: system
+        entry:
+          bash -c 'uv run scripts/translate_for_cursor.py && git add
+          .cursor/rules/'
+        files: ^plugins/.*/skills/.*\.md$
+        pass_filenames: false
+
+      - id: trunk
+        name: Trunk check
+        language: system
+        pass_filenames: false
+        entry: trunk check --fix --all

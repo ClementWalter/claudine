@@ -1,31 +1,25 @@
 ---
 name: Senior Rust Practices
-description: This skill should be used when the user asks about "rust workspace", "rust best practices", "cargo workspace setup", "rust code organization", "rust dependency management", "rust testing strategy", "rust project", "scalable rust", "rust CI setup", or needs guidance on senior-level Rust development patterns, workspace design, code organization strategies, or production-ready Rust architectures.
+description:
+  This skill should be used when the user asks about "rust workspace", "rust
+  best practices", "cargo workspace setup", "rust code organization", "rust
+  dependency management", "rust testing strategy", "rust project", "scalable
+  rust", "rust CI setup", or needs guidance on senior-level Rust development
+  patterns, workspace design, code organization strategies, or production-ready
+  Rust architectures.
 ---
 
 # Senior Rust Development Practices
 
-Battle-tested patterns for Rust workspace architecture, code organization, dependencies, and testing that scale from prototype to production.
-
-## Git Worktree Workflow Compliance
-
-**All coding work MUST happen in git worktrees.** Before making any code changes:
-
-1. Create a worktree: `git worktree add ~/.claude/worktrees/$(basename $(pwd))/<task> -b feat/<task>`
-2. Work in that directory
-3. Use `/merge` to consolidate changes back to main
-
-Never edit files directly in the main worktree.
+Battle-tested patterns for Rust workspace architecture, code organization,
+dependencies, and testing that scale from prototype to production.
 
 ## Completion Requirements
 
 **Before completing ANY Rust task, you MUST:**
 
-1. Run tests: `cargo test --workspace`
-2. Run linting: `trunk check`
-3. Fix any issues before declaring done
-
-If trunk has formatting issues, run `trunk fmt` to auto-fix.
+1. Run tests: `cargo test --workspace --release`
+2. Fix any issues before declaring done
 
 ## Workspace Architecture
 
@@ -56,11 +50,13 @@ repo/
 **Layered architecture:**
 
 - **core**: Pure logic, types, validation, algorithms. Minimal deps.
-- **adapters**: IO boundaries (db, network, rpc, filesystem). Trait-based boundary, minimal leakage.
+- **adapters**: IO boundaries (db, network, rpc, filesystem). Trait-based
+  boundary, minimal leakage.
 - **app / service**: Wiring (DI), config, runtime, orchestration.
 - **bins**: CLI/daemon that just calls "app".
 
-**Critical rule:** If `core` imports `tokio`, `reqwest`, or `sqlx`, you've already lost the separation.
+**Critical rule:** If `core` imports `tokio`, `reqwest`, or `sqlx`, you've
+already lost the separation.
 
 ### Default to a Small Number of Crates
 
@@ -99,7 +95,8 @@ This reduces version drift and security churn.
 
 ### Be Ruthless with Features
 
-- Prefer additive features (enable more capabilities) vs "feature flags that change semantics"
+- Prefer additive features (enable more capabilities) vs "feature flags that
+  change semantics"
 - Put "heavy" deps behind features (db, http, metrics)
 - Avoid default features that pull the world
 
@@ -163,7 +160,8 @@ If everything is `pub` you've created an accidental framework.
 
 ### Avoid "Prelude" Unless You Truly Need It
 
-Preludes tend to hide dependencies and make code review harder. Prefer explicit imports.
+Preludes tend to hide dependencies and make code review harder. Prefer explicit
+imports.
 
 ### Error Strategy: Pick One and Stick to It
 
@@ -172,7 +170,8 @@ Preludes tend to hide dependencies and make code review harder. Prefer explicit 
 - Library crates: `thiserror` for typed errors
 - Binaries: `anyhow` at the top level
 
-Don't leak `anyhow::Error` across library boundaries unless you explicitly want "opaque".
+Don't leak `anyhow::Error` across library boundaries unless you explicitly want
+"opaque".
 
 ### Keep Async at the Edge
 
@@ -200,7 +199,8 @@ Make dependency issues visible early (licenses, advisories, duplicate versions).
 
 ### Don't Use `unwrap()` in Libraries
 
-In binaries/tests it's fine (especially in test scaffolding). In libraries, return errors with context.
+In binaries/tests it's fine (especially in test scaffolding). In libraries,
+return errors with context.
 
 ## Testing Strategy That Scales
 
@@ -208,7 +208,8 @@ Think "pyramid":
 
 ### 1. Unit Tests: Fast, Deterministic, Lots
 
-- Put most tests close to code: `mod tests {}` in the same file for private access
+- Put most tests close to code: `mod tests {}` in the same file for private
+  access
 - Test invariants and edge cases, not just happy paths
 - Avoid hitting the filesystem/network in unit tests
 
@@ -233,13 +234,15 @@ If you have a service:
 
 ### 5. Doctests Are Underrated
 
-Doctests enforce that examples compile and keep your public API honest.
+Doctests enforce that examples compile and keep your public API honest. If you
+write doctests, they need to pass. Never ignore tests.
 
 ## Logging and Tracing
 
 ### Never Use `println!` - Use Tracing Instead
 
-**NEVER use `println!`, `eprintln!`, or `dbg!` for output.** Always use the `tracing` crate:
+**NEVER use `println!`, `eprintln!`, or `dbg!` for output.** Always use the
+`tracing` crate:
 
 ```rust
 use tracing::{debug, info, warn, error, trace};
@@ -293,9 +296,13 @@ Run tests with visible logs: `RUST_LOG=debug cargo test -- --nocapture`
 
 ## Clippy Rules to Follow
 
+Always use the most pedantic clippy rules. If the config is not set in file, do
+it.
+
 ### Inline Format Arguments (`clippy::uninlined_format_args`)
 
-Always use variables directly in format strings instead of passing them as arguments:
+Always use variables directly in format strings instead of passing them as
+arguments:
 
 ```rust
 // Good - variable inlined
@@ -327,8 +334,10 @@ cargo test --workspace --all-features
 ## Compile Times and Ergonomics
 
 - Use `resolver = "2"` and avoid unnecessary default features
-- Split "heavy" crates (like DB codegen, protobuf) into separate crates if they dominate rebuild time
-- Prefer incremental-friendly patterns: fewer proc-macros, fewer generics in hot paths unless needed
+- Split "heavy" crates (like DB codegen, protobuf) into separate crates if they
+  dominate rebuild time
+- Prefer incremental-friendly patterns: fewer proc-macros, fewer generics in hot
+  paths unless needed
 
 ## Practical Rules of Thumb
 
