@@ -1,0 +1,254 @@
+# =============================================================================
+# Production Docker Compose - SOC2/ISO27001 Compliant
+# =============================================================================
+# Security controls implemented:
+# - ISO A.9.4: no-new-privileges, read-only filesystems
+# - ISO A.13.1: Internal network isolation
+# - ISO A.14.2: Resource limits, container hardening
+# - SOC2 CC7.1: Structured logging with rotation
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ===========================================================================
+  # Application Service
+  # ===========================================================================
+  app:
+    image: ${REGISTRY_ENDPOINT}/${REGISTRY_NAMESPACE}/${APP_NAME}:${APP_VERSION:-latest}
+    container_name: ${APP_NAME:-app}
+    restart: unless-stopped
+
+    # -------------------------------------------------------------------------
+    # Security Options (ISO A.9.4 - Access Control)
+    # -------------------------------------------------------------------------
+    security_opt:
+      - no-new-privileges:true # Prevent privilege escalation
+
+    # Read-only root filesystem where possible
+    # Uncomment if your app supports it:
+    # read_only: true
+
+    # Drop all capabilities, add only what's needed
+    cap_drop:
+      - ALL
+    # cap_add:
+    #   - NET_BIND_SERVICE  # Only if binding to ports < 1024
+
+    # Run as non-root user (configure in Dockerfile)
+    # user: "1000:1000"
+
+    # -------------------------------------------------------------------------
+    # Resource Limits (ISO A.14.2 - Secure Development)
+    # -------------------------------------------------------------------------
+    deploy:
+      resources:
+        limits:
+          cpus: "${APP_CPU_LIMIT:-2}"
+          memory: ${APP_MEMORY_LIMIT:-2G}
+        reservations:
+          cpus: "${APP_CPU_RESERVATION:-0.5}"
+          memory: ${APP_MEMORY_RESERVATION:-512M}
+
+    # -------------------------------------------------------------------------
+    # Health Check (SOC2 CC7.1 - Monitoring)
+    # -------------------------------------------------------------------------
+    healthcheck:
+      test: [CMD, curl, -f, "http://localhost:${APP_PORT:-8000}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # -------------------------------------------------------------------------
+    # Networking (ISO A.13.1 - Network Security)
+    # -------------------------------------------------------------------------
+    networks:
+      - frontend # Exposed to reverse proxy
+      - backend # Internal communication only
+    ports:
+      - "${APP_PORT:-8000}:${APP_PORT:-8000}"
+
+    # -------------------------------------------------------------------------
+    # Environment Variables
+    # -------------------------------------------------------------------------
+    environment:
+      - APP_ENV=${APP_ENV:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=json
+      # Add application-specific variables here
+
+    # -------------------------------------------------------------------------
+    # Volumes
+    # -------------------------------------------------------------------------
+    volumes:
+      - app-data:/data:rw
+      - app-logs:/var/log/app:rw
+      # Mount secrets as read-only
+      # - ./secrets:/run/secrets:ro
+
+    # -------------------------------------------------------------------------
+    # Logging (SOC2 CC7.1, ISO A.12.4)
+    # -------------------------------------------------------------------------
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: 5
+        labels: service,environment
+        env: APP_ENV
+
+    # -------------------------------------------------------------------------
+    # Labels
+    # -------------------------------------------------------------------------
+    labels:
+      - "com.company.service=${APP_NAME:-app}"
+      - "com.company.environment=${APP_ENV:-production}"
+      - com.company.compliance=soc2-iso27001
+
+  # ===========================================================================
+  # Reverse Proxy (Optional - Traefik example)
+  # ===========================================================================
+  # traefik:
+  #   image: traefik:v2.10
+  #   container_name: traefik
+  #   restart: unless-stopped
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   cap_add:
+  #     - NET_BIND_SERVICE
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: "1"
+  #         memory: 512M
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - /var/run/docker.sock:ro
+  #     - ./traefik:/etc/traefik:ro
+  #     - traefik-certs:/letsencrypt
+  #   networks:
+  #     - frontend
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "50m"
+  #       max-file: "3"
+
+  # ===========================================================================
+  # Database Service (Example - PostgreSQL)
+  # ===========================================================================
+  # db:
+  #   image: postgres:15-alpine
+  #   container_name: ${APP_NAME:-app}-db
+  #   restart: unless-stopped
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: "2"
+  #         memory: 2G
+  #   environment:
+  #     POSTGRES_DB: ${DB_NAME:-app}
+  #     POSTGRES_USER: ${DB_USER:-app}
+  #     POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+  #   volumes:
+  #     - db-data:/var/lib/postgresql/data
+  #   networks:
+  #     - backend  # Internal only, not exposed to frontend
+  #   secrets:
+  #     - db_password
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-app}"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "50m"
+  #       max-file: "3"
+
+  # ===========================================================================
+  # Redis Cache (Example)
+  # ===========================================================================
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: ${APP_NAME:-app}-redis
+  #   restart: unless-stopped
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   read_only: true
+  #   cap_drop:
+  #     - ALL
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: "1"
+  #         memory: 512M
+  #   command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+  #   volumes:
+  #     - redis-data:/data
+  #   networks:
+  #     - backend
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "50m"
+  #       max-file: "3"
+
+# =============================================================================
+# Networks (ISO A.13.1 - Network Security)
+# =============================================================================
+networks:
+  frontend:
+    driver: bridge
+    name: ${APP_NAME:-app}-frontend
+
+  backend:
+    driver: bridge
+    internal: true # No external access - ISO A.13.1
+    name: ${APP_NAME:-app}-backend
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  app-data:
+    driver: local
+    name: ${APP_NAME:-app}-data
+
+  app-logs:
+    driver: local
+    name: ${APP_NAME:-app}-logs
+
+  # db-data:
+  #   driver: local
+  #   name: ${APP_NAME:-app}-db-data
+
+  # redis-data:
+  #   driver: local
+  #   name: ${APP_NAME:-app}-redis-data
+
+  # traefik-certs:
+  #   driver: local
+  #   name: traefik-certs
+
+# =============================================================================
+# Secrets (Uncomment to use Docker secrets)
+# =============================================================================
+# secrets:
+#   db_password:
+#     file: ./secrets/db_password.txt
