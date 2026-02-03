@@ -7,6 +7,7 @@
 import json
 import sys
 from datetime import datetime
+from pathlib import Path
 
 
 def main() -> None:
@@ -28,6 +29,8 @@ def main() -> None:
 
     # Determine the learnings folder path relative to project
     learnings_dir = f".claude/skills/{skill_path_name}/learnings"
+    learnings_dir = Path(learnings_dir)
+    learnings_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate timestamp for unique filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
