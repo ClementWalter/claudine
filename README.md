@@ -16,3 +16,13 @@ easily.
 
 If you want Claudine's twin, Codexine, it's fine. Just replace `.claude/` with
 `.codex/`, there are the same (symlinked).
+
+For a quick start, you can use the `skill-sync` script to sync the skills to
+your current directory.
+
+```bash
+uv run scripts/skill_sync.py
+```
+
+This will create symlinks in your current directory to the skills in the
+`.claude/` directory.
