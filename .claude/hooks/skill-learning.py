@@ -1,13 +1,16 @@
-#!/usr/bin/env -S uv run
+#!/usr/bin/env -S uv run --python 3.12
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12"
 # ///
-"""Hook: After a skill is used, prompt Claude to create a learning summary."""
+"""Hook: PostToolUse:Skill - Append to marker file when a skill is invoked."""
 
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
+
+
+MARKER_FILE = Path.home() / ".claude" / ".pending-skill-learning.json"
 
 
 def main() -> None:
@@ -27,33 +30,46 @@ def main() -> None:
     # Handle namespaced skills (e.g., "ms-office-suite:pdf" -> "pdf")
     skill_path_name = skill_name.split(":")[-1]
 
-    # Determine the learnings folder path relative to project
-    learnings_dir = f".claude/skills/{skill_path_name}/learnings"
-    learnings_dir = Path(learnings_dir)
-    learnings_dir.mkdir(parents=True, exist_ok=True)
-
     # Generate timestamp for unique filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Output JSON with additionalContext to prompt Claude
+    # New skill entry
+    new_entry = {
+        "skill_name": skill_name,
+        "skill_path_name": skill_path_name,
+        "timestamp": timestamp,
+        "learnings_path": f".claude/skills/{skill_path_name}/learnings/{timestamp}.md",
+        "created_at": datetime.now().isoformat(),
+    }
+
+    # Load existing pending skills or start fresh
+    MARKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    pending_skills = []
+    if MARKER_FILE.exists():
+        try:
+            content = json.loads(MARKER_FILE.read_text())
+            # Handle both old format (single dict) and new format (list)
+            if isinstance(content, list):
+                pending_skills = content
+            elif isinstance(content, dict):
+                pending_skills = [content]
+        except (json.JSONDecodeError, OSError):
+            pending_skills = []
+
+    # Append new skill (avoid duplicates by skill_name)
+    existing_names = {s.get("skill_name") for s in pending_skills}
+    if skill_name not in existing_names:
+        pending_skills.append(new_entry)
+        MARKER_FILE.write_text(json.dumps(pending_skills, indent=2))
+
+    # Output minimal acknowledgment
+    count = len(pending_skills)
     output = {
-        "hookSpecificOutput": {
-            "additionalContext": (
-                f"IMPORTANT: A skill was just used. Please create a learning summary file at "
-                f"'{learnings_dir}/{timestamp}.md' with the following format:\n\n"
-                "# Learning: [Brief title of what was learned]\n\n"
-                "## DO\n"
-                "- [Specific actionable advice to follow]\n"
-                "- [Another do item]\n\n"
-                "## DON'T\n"
-                "- [Specific pitfalls to avoid]\n"
-                "- [Another don't item]\n\n"
-                "## Context\n"
-                "[Brief explanation of the situation that led to this learning]\n\n"
-                "First create the learnings directory if it doesn't exist, then write the learning file. "
-                "Base the content on what was just discussed/accomplished with the skill."
-            )
-        }
+        "systemMessage": (
+            f"Skill '{skill_name}' loaded ({count} skill(s) pending). "
+            "Learning summary will be requested when you indicate the work is complete "
+            "(e.g., 'looks good', 'done', 'ship it')."
+        )
     }
 
     print(json.dumps(output))

@@ -6,7 +6,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run $CLAUDE_PROJECT_DIR/.claude/hooks/skill-learning.py"
+            "command": "uv run /Users/clementwalter/.claude/hooks/skill-learning.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run /Users/clementwalter/.claude/hooks/skill-learning-trigger.py"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run /Users/clementwalter/.claude/hooks/skill-learning-cleanup.py"
           }
         ]
       }
