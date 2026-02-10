@@ -19,3 +19,10 @@ Project like have pre commit hooks. These are **CRITICAL**. Don't stop without
 committing the changes because they don't pass. Don't evaluate the relevance of
 these hooks, just fix them. using `prek run` run them without committing. Don't
 disable linting rules that don't pass, fix errors.
+
+## Code
+
+When you write code, you should follow these rules:
+
+- always explain the why in comment
+- always add a module-level docstring
