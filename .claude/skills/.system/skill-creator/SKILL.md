@@ -416,17 +416,6 @@ would be beneficial and non-obvious to Codex. Consider what procedural
 knowledge, domain-specific details, or reusable assets would help another Codex
 instance execute these tasks more effectively.
 
-#### Learn Proven Design Patterns
-
-Consult these helpful guides based on your skill's needs:
-
-- **Multi-step processes**: See references/workflows.md for sequential workflows
-  and conditional logic
-- **Specific output formats or quality standards**: See
-  references/output-patterns.md for template and example patterns
-
-These files contain established best practices for effective skill design.
-
 #### Start with Reusable Skill Contents
 
 To begin implementation, start with the reusable resources identified above:
