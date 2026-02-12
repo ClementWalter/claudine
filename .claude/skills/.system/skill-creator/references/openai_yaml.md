@@ -22,6 +22,9 @@ dependencies:
       description: "GitHub MCP server"
       transport: "streamable_http"
       url: "https://api.githubcopilot.com/mcp/"
+
+policy:
+  allow_implicit_invocation: true
 ```
 
 ## Field descriptions and constraints
@@ -53,3 +56,6 @@ Top-level constraints:
   dependency.
 - `dependencies.tools[].transport`: Connection type when `type` is `mcp`.
 - `dependencies.tools[].url`: MCP server URL when `type` is `mcp`.
+- `policy.allow_implicit_invocation`: When false, the skill is not injected into
+  the model context by default, but can still be invoked explicitly via
+  `$skill`. Defaults to true.
