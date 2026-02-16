@@ -1,3 +1,9 @@
 [submodule "/Users/clementwalter/Documents/claudine/external/ethskills"]
 	path = /Users/clementwalter/Documents/claudine/external/ethskills
 	url = git@github.com:austintgriffith/ethskills.git
+[submodule "/Users/clementwalter/Documents/claudine/external/skill-issue"]
+	path = /Users/clementwalter/Documents/claudine/external/skill-issue
+	url = git@github.com:enitrat/skill-issue.git
+[submodule "external/skill-issue"]
+	path = external/skill-issue
+	url = git@github.com:enitrat/skill-issue.git
