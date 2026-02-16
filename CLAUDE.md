@@ -51,4 +51,6 @@ data. Test frameworks have built in tools for this:
 - when running the full test suite, always start with previous failures only.
   Then when it passes, run the full test suite.
 - Measure time to run the full test suite. If it's slow (several minutes), use
-  parallelization
+  parallelization, e.g.
+  [pytest-xdist](https://pytest-xdist.readthedocs.io/en/stable/) or
+  [cargo nextest](https://nexte.st/).

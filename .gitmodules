@@ -1,0 +1,3 @@
+[submodule "/Users/clementwalter/Documents/claudine/external/ethskills"]
+	path = /Users/clementwalter/Documents/claudine/external/ethskills
+	url = git@github.com:austintgriffith/ethskills.git
