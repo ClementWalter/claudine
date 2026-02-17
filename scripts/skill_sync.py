@@ -4,7 +4,10 @@
 # dependencies = ["click"]
 # ///
 """
-Sync Claude/Codex skills by creating symlinks from a source .claude folder.
+Sync Claude/Codex skills and root files by creating symlinks from a source repo.
+
+Syncs .claude/ and .codex/ contents plus CLAUDE.md and AGENTS.md from the source
+repo root into the target directory.
 
 Usage:
     uv run scripts/skill_sync.py
@@ -32,6 +35,7 @@ import click
 
 DEFAULT_SOURCE = Path.home() / "Documents" / "claudine" / ".claude"
 TARGET_FOLDERS = [".claude", ".codex"]
+ROOT_FILES = ["CLAUDE.md", "AGENTS.md"]
 
 
 def create_symlink(
@@ -133,6 +137,20 @@ def main(source: Path, target: Path, force: bool, dry_run: bool) -> None:
                 click.echo(message)
 
         click.echo()
+
+    # Sync CLAUDE.md and AGENTS.md from source repo root to target
+    source_root = source.parent
+    click.echo("Syncing root files to target/")
+    for name in ROOT_FILES:
+        source_file = source_root / name
+        if not source_file.is_file():
+            click.echo(f"  [skip] {name} (not found in source)")
+            continue
+        target_file = target / name
+        message = create_symlink(source_file, target_file, force, dry_run)
+        if message:
+            click.echo(message)
+    click.echo()
 
     click.echo("Done!")
 
