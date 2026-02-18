@@ -28,14 +28,49 @@ Examples:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import click
 
-DEFAULT_SOURCE = Path.home() / "Documents" / "claudine" / ".claude"
+DEFAULT_SOURCE = Path(os.environ.get("CLAUDINE_DIR", str(Path.home() / "Documents" / "claudine"))) / ".claude"
 TARGET_FOLDERS = [".claude", ".codex"]
 ROOT_FILES = ["CLAUDE.md", "AGENTS.md"]
+GITIGNORE_MARKER = "# skill_sync symlinks"
+
+
+def update_gitignore(
+    target: Path,
+    entries: list[str],
+    dry_run: bool,
+) -> None:
+    """Append synced paths to .gitignore so symlinked items aren't committed."""
+    gitignore = target / ".gitignore"
+
+    existing_lines: set[str] = set()
+    if gitignore.exists():
+        existing_lines = set(gitignore.read_text().splitlines())
+
+    new_entries = [e for e in entries if e not in existing_lines]
+    if not new_entries:
+        click.echo("  [skip] .gitignore (already up to date)")
+        return
+
+    if dry_run:
+        for entry in new_entries:
+            click.echo(f"  [would add to .gitignore] {entry}")
+        return
+
+    with gitignore.open("a") as f:
+        # Add a section header on first use
+        if GITIGNORE_MARKER not in existing_lines:
+            f.write(f"\n{GITIGNORE_MARKER}\n")
+        for entry in new_entries:
+            f.write(f"{entry}\n")
+
+    for entry in new_entries:
+        click.echo(f"  [add to .gitignore] {entry}")
 
 
 def create_symlink(
@@ -119,6 +154,9 @@ def main(source: Path, target: Path, force: bool, dry_run: bool) -> None:
         click.echo("No items found in source folder")
         return
 
+    # Collect gitignore entries as we create symlinks
+    gitignore_entries: list[str] = []
+
     for folder_name in TARGET_FOLDERS:
         target_folder = target / folder_name
         click.echo(f"Syncing to {target_folder}/")
@@ -135,6 +173,8 @@ def main(source: Path, target: Path, force: bool, dry_run: bool) -> None:
             message = create_symlink(source_item, target_item, force, dry_run)
             if message:
                 click.echo(message)
+            # Track path relative to target for .gitignore
+            gitignore_entries.append(f"{folder_name}/{source_item.name}")
 
         click.echo()
 
@@ -150,6 +190,12 @@ def main(source: Path, target: Path, force: bool, dry_run: bool) -> None:
         message = create_symlink(source_file, target_file, force, dry_run)
         if message:
             click.echo(message)
+        gitignore_entries.append(name)
+    click.echo()
+
+    # Update .gitignore so symlinked items aren't committed to target repo
+    click.echo("Updating .gitignore")
+    update_gitignore(target, gitignore_entries, dry_run)
     click.echo()
 
     click.echo("Done!")
