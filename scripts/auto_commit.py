@@ -57,6 +57,13 @@ def main() -> int:
         logger.error("git add failed: %s", result.stderr)
         return 1
 
+    # Re-check after staging — git add -A may resolve to no actual diff
+    # (e.g. stat-only changes that update-index already handled)
+    result = run(["git", "diff", "--cached", "--quiet"])
+    if result.returncode == 0:
+        logger.info("Nothing staged after git add, nothing to do.")
+        return 0
+
     # Build a commit message with timestamp
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     message = f"auto-sync: {now}"
