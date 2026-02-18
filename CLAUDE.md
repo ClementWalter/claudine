@@ -54,3 +54,12 @@ data. Test frameworks have built in tools for this:
   parallelization, e.g.
   [pytest-xdist](https://pytest-xdist.readthedocs.io/en/stable/) or
   [cargo nextest](https://nexte.st/).
+
+## Deployment
+
+Always deploy to Scaleway using the skill. If facing issues, update the skill
+with your findings.
+
+**CRITICAL**: Deployment time can be long, so **always** fully test locally
+before deploying. The deployment should not reveal any features related issues.
+If it doesn't work at first attempt, fix and update the skill.
