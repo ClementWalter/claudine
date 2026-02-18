@@ -233,3 +233,8 @@ uv run .claude/skills/scaleway-dev/scripts/destroy.py
 5. **Always** store credentials in GitHub Secrets
 6. **Always** run compliance checks silently
 7. **Only** tell the user: "Setting up..." / "Deploying..." / "Done!"
+
+## Serverless Containers (Recommended for Apps)
+
+See the deployment strategy section above for when to use Serverless Containers vs VPS.
+Quick reference: `scw container container create` and `scw container container deploy`.
