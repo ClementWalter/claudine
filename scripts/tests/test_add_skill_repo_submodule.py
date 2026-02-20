@@ -345,6 +345,14 @@ def test_run_claude_skillgen_invokes_claude_p(tmp_path: Path) -> None:
     assert called_cmd[1] == "-p"
 
 
+def test_run_claude_skillgen_passes_dangerously_skip_permissions(tmp_path: Path) -> None:
+    """The --dangerously-skip-permissions flag is passed so Claude can write files unattended."""
+    with patch("scripts.add_skill_repo_submodule.subprocess.run") as mock_run:
+        _run_claude_skillgen(tmp_path)
+    called_cmd = mock_run.call_args[0][0]
+    assert "--dangerously-skip-permissions" in called_cmd
+
+
 def test_run_claude_skillgen_uses_skill_dir_as_cwd(tmp_path: Path) -> None:
     """The claude process runs with cwd set to the skill directory."""
     with patch("scripts.add_skill_repo_submodule.subprocess.run") as mock_run:

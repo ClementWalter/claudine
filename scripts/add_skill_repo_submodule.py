@@ -188,8 +188,9 @@ def _run_claude_skillgen(skill_dir: Path) -> None:
     logger.info("Launching Claude to generate SKILL.md in %s", skill_dir)
     try:
         # No capture_output so the generation streams to the user's terminal
+        # --dangerously-skip-permissions allows Claude to write files without prompting
         subprocess.run(
-            ["claude", "-p", prompt],
+            ["claude", "-p", prompt, "--dangerously-skip-permissions"],
             cwd=skill_dir,
             check=True,
         )
