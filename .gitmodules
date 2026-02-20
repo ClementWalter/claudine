@@ -7,3 +7,6 @@
 [submodule "external/skill-issue"]
 	path = external/skill-issue
 	url = git@github.com:enitrat/skill-issue.git
+[submodule "/Users/clementwalter/Documents/claudine/external/effect-solutions"]
+	path = /Users/clementwalter/Documents/claudine/external/effect-solutions
+	url = https://github.com/kitlangton/effect-solutions
