@@ -27,6 +27,7 @@ When you write code, you should follow these rules:
 - always explain the why in comment
 - always add a module-level docstring
 - never use print statements, always use proper logging frameworks.
+- always commit and push changes to the remote repository.
 
 ## Testing
 
