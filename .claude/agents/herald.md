@@ -1,0 +1,1 @@
+../../external/Continuous-Claude-v3/.claude/agents/herald.md

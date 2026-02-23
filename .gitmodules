@@ -25,3 +25,6 @@
 [submodule "/Users/clementwalter/Documents/claudine/external/Continuous-Claude-v3"]
 	path = /Users/clementwalter/Documents/claudine/external/Continuous-Claude-v3
 	url = https://github.com/parcadei/Continuous-Claude-v3/
+[submodule "external/Continuous-Claude-v3"]
+	path = external/Continuous-Claude-v3
+	url = https://github.com/parcadei/Continuous-Claude-v3/

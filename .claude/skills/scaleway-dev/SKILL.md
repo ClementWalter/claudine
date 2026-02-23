@@ -236,5 +236,6 @@ uv run .claude/skills/scaleway-dev/scripts/destroy.py
 
 ## Serverless Containers (Recommended for Apps)
 
-See the deployment strategy section above for when to use Serverless Containers vs VPS.
-Quick reference: `scw container container create` and `scw container container deploy`.
+See the deployment strategy section above for when to use Serverless Containers
+vs VPS. Quick reference: `scw container container create` and
+`scw container container deploy`.
