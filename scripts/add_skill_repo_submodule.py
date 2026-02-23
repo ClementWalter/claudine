@@ -30,11 +30,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-import click
+import click  # pyright: ignore[reportMissingImports]
 
 SKILL_FILENAME = "SKILL.md"
 EXTERNAL_DIR = "external"
 SKILLS_DIR = ".claude/skills"
+AGENTS_DIR = ".claude/agents"
+AGENT_SOURCE_DIRS = ("agents", "subagents")
 ENV_REPO_ROOT = "CLAUDINE_REPO"
 
 logger = logging.getLogger(__name__)
@@ -105,6 +107,25 @@ def minimal_skill_dirs(dirs: list[Path], submodule_root: Path) -> list[Path]:
     ]
 
 
+def discover_agent_files(submodule_root: Path) -> list[tuple[Path, Path]]:
+    """
+    Discover subagent definition files under ``agents/`` and ``subagents/``.
+
+    Returns tuples of (source_file, relative_target_path), where relative_target_path
+    is the path relative to the source folder root to preserve organization.
+    """
+    discovered: list[tuple[Path, Path]] = []
+    for source_dir_name in AGENT_SOURCE_DIRS:
+        source_root = submodule_root / source_dir_name
+        if not source_root.is_dir():
+            continue
+        for file_path in sorted(source_root.rglob("*.md")):
+            if not file_path.is_file():
+                continue
+            discovered.append((file_path, file_path.relative_to(source_root)))
+    return discovered
+
+
 def add_submodule(repo_root: Path, url: str, submodule_path: Path) -> None:
     """Run git submodule add; raises CalledProcessError on failure."""
     subprocess.run(
@@ -156,6 +177,48 @@ def _unique_skill_link_path(skills_dir: Path, base_name: str, repo_name: str) ->
         if not candidate.exists() and not candidate.is_symlink():
             return candidate
         n += 1
+
+
+def _unique_agent_link_path(base_target_path: Path, repo_name: str) -> Path:
+    """Return a file path sibling that does not exist (for keep_both agent collisions)."""
+    suffix = base_target_path.suffix
+    stem = base_target_path.stem
+    parent = base_target_path.parent
+
+    candidate = parent / f"{stem}-{repo_name}{suffix}"
+    if not candidate.exists() and not candidate.is_symlink():
+        return candidate
+
+    n = 2
+    while True:
+        candidate = parent / f"{stem}-{repo_name}-{n}{suffix}"
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+        n += 1
+
+
+def _prompt_yes_no(question: str, default: bool) -> bool:
+    """
+    Prompt for a Yes/No answer in TTY mode.
+
+    Non-interactive stdin returns the default.
+    """
+    if not sys.stdin.isatty():
+        return default
+
+    default_hint = "Y/n" if default else "y/N"
+    while True:
+        try:
+            choice = input(f"{question} [{default_hint}] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return default
+        if not choice:
+            return default
+        if choice in ("y", "yes"):
+            return True
+        if choice in ("n", "no"):
+            return False
+        click.echo("  Please enter Y or N.", err=True)
 
 
 def _scaffold_skill_from_subpath(
@@ -243,13 +306,19 @@ def run(
     url: str,
     external_dir: Path,
     skills_dir: Path,
+    agents_dir: Path,
     force: bool = False,
     run_skillgen: bool = True,
+    sync_skills: bool = True,
+    sync_agents: bool = True,
 ) -> None:
     """
-    Add submodule at external/<repo_name> and create skill entries under .claude/skills.
+    Add submodule at external/<repo_name> and create entries under .claude.
 
-    For plain repo URLs: discovers SKILL.md folders and creates flat symlinks.
+    For plain repo URLs:
+    - discovers SKILL.md folders and creates flat skill symlinks, and/or
+    - discovers subagent markdown files under agents/ or subagents/ and symlinks
+      them into .claude/agents preserving subfolders.
     For GitHub tree URLs (containing /tree/<branch>/<path>): creates a scaffold skill
     directory named after the repo with a references symlink to the subpath, then
     optionally runs Claude to generate a SKILL.md.
@@ -328,70 +397,108 @@ def run(
         except subprocess.CalledProcessError as e:
             logger.warning("git submodule update failed: %s; continuing with existing tree", e.stderr or e)
 
-    ensure_dir(skills_dir)
-
-    if subpath:
-        # GitHub tree URL path: scaffold a real skill directory with a references symlink
-        _scaffold_skill_from_subpath(
-            skills_dir=skills_dir,
-            skill_name=name,
-            submodule_path=submodule_path,
-            subpath=subpath,
-            force=force,
-            run_skillgen=run_skillgen,
-        )
-    else:
-        # Plain repo URL path: discover SKILL.md folders and create flat symlinks
-        all_with_skill = skill_folders_recursive(submodule_path)
-        folders = minimal_skill_dirs(all_with_skill, submodule_path)
-        if not folders:
-            logger.info("No directories with %s found; no symlinks created", SKILL_FILENAME)
-            return
-
-        try:
-            submodule_resolved = submodule_path.resolve()
-        except OSError as e:
-            logger.error("Cannot resolve submodule path: %s", e)
-            sys.exit(1)
-
-        # Flat layout: .claude/skills/<skill_name>/ for each skill (leaf name only)
-        for folder in sorted(folders, key=lambda p: len(p.parts)):
-            if folder == submodule_path:
-                skill_name = name
-                target = submodule_resolved
+    if sync_skills:
+        ensure_dir(skills_dir)
+        if subpath:
+            # GitHub tree URL path: scaffold a real skill directory with a references symlink
+            _scaffold_skill_from_subpath(
+                skills_dir=skills_dir,
+                skill_name=name,
+                submodule_path=submodule_path,
+                subpath=subpath,
+                force=force,
+                run_skillgen=run_skillgen,
+            )
+        else:
+            # Plain repo URL path: discover SKILL.md folders and create flat symlinks
+            all_with_skill = skill_folders_recursive(submodule_path)
+            folders = minimal_skill_dirs(all_with_skill, submodule_path)
+            if not folders:
+                logger.info("No directories with %s found; no skill symlinks created", SKILL_FILENAME)
             else:
-                skill_name = folder.name
-                target = submodule_resolved / folder.relative_to(submodule_path)
-            link_path = skills_dir / skill_name
-            if link_path.exists() or link_path.is_symlink():
-                if not force:
-                    choice = _prompt_collision(skill_name, link_path, name)
-                    if choice == "skip":
-                        continue
-                    if choice == "keep_both":
-                        link_path = _unique_skill_link_path(skills_dir, skill_name, name)
-                    else:  # replace
-                        if link_path.is_symlink():
+                try:
+                    submodule_resolved = submodule_path.resolve()
+                except OSError as e:
+                    logger.error("Cannot resolve submodule path: %s", e)
+                    sys.exit(1)
+
+                # Flat layout: .claude/skills/<skill_name>/ for each skill (leaf name only)
+                for folder in sorted(folders, key=lambda p: len(p.parts)):
+                    if folder == submodule_path:
+                        skill_name = name
+                        target = submodule_resolved
+                    else:
+                        skill_name = folder.name
+                        target = submodule_resolved / folder.relative_to(submodule_path)
+                    link_path = skills_dir / skill_name
+                    if link_path.exists() or link_path.is_symlink():
+                        if not force:
+                            choice = _prompt_collision(skill_name, link_path, name)
+                            if choice == "skip":
+                                continue
+                            if choice == "keep_both":
+                                link_path = _unique_skill_link_path(skills_dir, skill_name, name)
+                            else:  # replace
+                                if link_path.is_symlink():
+                                    link_path.unlink()
+                                elif link_path.is_dir():
+                                    shutil.rmtree(link_path)
+                                else:
+                                    logger.error("Skill target exists and is a file (not a dir/symlink): %s", link_path)
+                                    sys.exit(1)
+                        else:
+                            if link_path.is_symlink():
+                                link_path.unlink()
+                            elif link_path.is_dir():
+                                shutil.rmtree(link_path)
+                            else:
+                                logger.error("Skill target exists and is a file (not a dir/symlink): %s", link_path)
+                                sys.exit(1)
+                    try:
+                        rel = Path(os.path.relpath(target, link_path.parent))
+                    except ValueError:
+                        rel = target
+                    link_path.symlink_to(rel, target_is_directory=True)
+                    logger.info("Linked %s -> %s", link_path, rel)
+
+    if sync_agents:
+        ensure_dir(agents_dir)
+        discovered_agents = discover_agent_files(submodule_path)
+        if not discovered_agents:
+            logger.info("No agent markdown files found under agents/ or subagents/; no agent symlinks created")
+        else:
+            for source_file, rel_target in discovered_agents:
+                link_path = agents_dir / rel_target
+                link_path.parent.mkdir(parents=True, exist_ok=True)
+                if link_path.exists() or link_path.is_symlink():
+                    if not force:
+                        choice = _prompt_collision(rel_target.name, link_path, name)
+                        if choice == "skip":
+                            continue
+                        if choice == "keep_both":
+                            link_path = _unique_agent_link_path(link_path, name)
+                        else:  # replace
+                            if link_path.is_symlink() or link_path.is_file():
+                                link_path.unlink()
+                            elif link_path.is_dir():
+                                shutil.rmtree(link_path)
+                            else:
+                                logger.error("Agent target exists and cannot be replaced: %s", link_path)
+                                sys.exit(1)
+                    else:
+                        if link_path.is_symlink() or link_path.is_file():
                             link_path.unlink()
                         elif link_path.is_dir():
                             shutil.rmtree(link_path)
                         else:
-                            logger.error("Skill target exists and is a file (not a dir/symlink): %s", link_path)
+                            logger.error("Agent target exists and cannot be replaced: %s", link_path)
                             sys.exit(1)
-                else:
-                    if link_path.is_symlink():
-                        link_path.unlink()
-                    elif link_path.is_dir():
-                        shutil.rmtree(link_path)
-                    else:
-                        logger.error("Skill target exists and is a file (not a dir/symlink): %s", link_path)
-                        sys.exit(1)
-            try:
-                rel = Path(os.path.relpath(target, link_path.parent))
-            except ValueError:
-                rel = target
-            link_path.symlink_to(rel, target_is_directory=True)
-            logger.info("Linked %s -> %s", link_path, rel)
+                try:
+                    rel = Path(os.path.relpath(source_file.resolve(), link_path.parent))
+                except ValueError:
+                    rel = source_file.resolve()
+                link_path.symlink_to(rel)
+                logger.info("Linked %s -> %s", link_path, rel)
 
 
 @click.command()
@@ -417,6 +524,13 @@ def run(
     help=f"Skills directory for symlinks (default: <repo-root>/{SKILLS_DIR})",
 )
 @click.option(
+    "--agents",
+    "agents_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help=f"Agents directory for symlinks (default: <repo-root>/{AGENTS_DIR})",
+)
+@click.option(
     "--force",
     "-f",
     is_flag=True,
@@ -427,13 +541,26 @@ def run(
     default=True,
     help="Run Claude to auto-generate SKILL.md for scaffold skills from tree URLs (default: enabled)",
 )
+@click.option(
+    "--sync-skills/--no-sync-skills",
+    default=None,
+    help="Sync skills symlinks (default: prompt in interactive mode)",
+)
+@click.option(
+    "--sync-agents/--no-sync-agents",
+    default=None,
+    help="Sync agent symlinks from agents/ or subagents/ (default: prompt in interactive mode)",
+)
 def main(
     url: str,
     repo_root: Path | None,
     external_dir: Path | None,
     skills_dir: Path | None,
+    agents_dir: Path | None,
     force: bool,
     skillgen: bool,
+    sync_skills: bool | None,
+    sync_agents: bool | None,
 ) -> None:
     """Add a Git repo as submodule under external/ and symlink skill folders to .claude/skills.
 
@@ -452,9 +579,28 @@ def main(
         skills_dir = repo_root / SKILLS_DIR
     else:
         skills_dir = skills_dir.resolve()
+    if agents_dir is None:
+        agents_dir = repo_root / AGENTS_DIR
+    else:
+        agents_dir = agents_dir.resolve()
 
-    run(repo_root, url, external_dir, skills_dir, force=force, run_skillgen=skillgen)
+    if sync_skills is None:
+        sync_skills = _prompt_yes_no("sync skill?", default=True)
+    if sync_agents is None:
+        sync_agents = _prompt_yes_no("sync agents?", default=True)
+
+    run(
+        repo_root,
+        url,
+        external_dir,
+        skills_dir,
+        agents_dir,
+        force=force,
+        run_skillgen=skillgen,
+        sync_skills=sync_skills,
+        sync_agents=sync_agents,
+    )
 
 
 if __name__ == "__main__":
-    main()
+    main()  # type: ignore[call-arg]

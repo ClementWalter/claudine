@@ -6,12 +6,15 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from click.testing import CliRunner
 
 from scripts.add_skill_repo_submodule import (
     ENV_REPO_ROOT,
     _default_repo_root,
     _run_claude_skillgen,
     _scaffold_skill_from_subpath,
+    discover_agent_files,
+    main,
     minimal_skill_dirs,
     parse_github_tree_url,
     repo_name_from_url,
@@ -375,3 +378,93 @@ def test_run_claude_skillgen_handles_called_process_error_gracefully(tmp_path: P
         side_effect=subprocess.CalledProcessError(1, "claude"),
     ):
         _run_claude_skillgen(tmp_path)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# discover_agent_files
+# ---------------------------------------------------------------------------
+
+
+def test_discover_agent_files_returns_empty_when_no_agent_dirs(tmp_path: Path) -> None:
+    """No agents/ or subagents/ folder means no discovered agent files."""
+    assert discover_agent_files(tmp_path) == []
+
+
+def test_discover_agent_files_finds_agents_markdown_files(tmp_path: Path) -> None:
+    """Markdown files in agents/ are discovered with relative target paths."""
+    agent_file = tmp_path / "agents" / "code-reviewer.md"
+    agent_file.parent.mkdir(parents=True)
+    agent_file.write_text("---\nname: code-reviewer\ndescription: test\n---\n")
+    discovered = discover_agent_files(tmp_path)
+    assert discovered == [(agent_file, Path("code-reviewer.md"))]
+
+
+def test_discover_agent_files_finds_subagents_nested_markdown_files(tmp_path: Path) -> None:
+    """Nested markdown files in subagents/ preserve nested relative target paths."""
+    agent_file = tmp_path / "subagents" / "quality" / "lint-reviewer.md"
+    agent_file.parent.mkdir(parents=True)
+    agent_file.write_text("---\nname: lint-reviewer\ndescription: test\n---\n")
+    discovered = discover_agent_files(tmp_path)
+    assert discovered == [(agent_file, Path("quality/lint-reviewer.md"))]
+
+
+def test_discover_agent_files_ignores_non_markdown_files(tmp_path: Path) -> None:
+    """Non-markdown files in agent folders are ignored."""
+    non_md_file = tmp_path / "agents" / "code-reviewer.txt"
+    non_md_file.parent.mkdir(parents=True)
+    non_md_file.write_text("not markdown")
+    discovered = discover_agent_files(tmp_path)
+    assert discovered == []
+
+
+# ---------------------------------------------------------------------------
+# CLI prompt / sync wiring
+# ---------------------------------------------------------------------------
+
+
+def test_main_prompts_for_sync_choices_when_flags_not_provided(tmp_path: Path) -> None:
+    """CLI prompts for sync skill and sync agents and forwards choices to run()."""
+    runner = CliRunner()
+
+    with (
+        patch("scripts.add_skill_repo_submodule._prompt_yes_no", side_effect=[True, False]) as mock_prompt,
+        patch("scripts.add_skill_repo_submodule.run") as mock_run,
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "https://github.com/org/repo.git",
+                "--repo-root",
+                str(tmp_path),
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert mock_prompt.call_count == 2
+    assert mock_run.call_args.kwargs["sync_skills"] is True
+    assert mock_run.call_args.kwargs["sync_agents"] is False
+
+
+def test_main_skips_prompt_when_sync_flags_are_provided(tmp_path: Path) -> None:
+    """Explicit --sync flags bypass prompts and forward provided values to run()."""
+    runner = CliRunner()
+
+    with (
+        patch("scripts.add_skill_repo_submodule._prompt_yes_no") as mock_prompt,
+        patch("scripts.add_skill_repo_submodule.run") as mock_run,
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "https://github.com/org/repo.git",
+                "--repo-root",
+                str(tmp_path),
+                "--no-sync-skills",
+                "--sync-agents",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert mock_prompt.call_count == 0
+    assert mock_run.call_args.kwargs["sync_skills"] is False
+    assert mock_run.call_args.kwargs["sync_agents"] is True
