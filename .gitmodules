@@ -13,3 +13,6 @@
 [submodule "external/effect-solutions"]
 	path = external/effect-solutions
 	url = https://github.com/kitlangton/effect-solutions
+[submodule "/Users/clementwalter/Documents/claudine/external/zama-marketplace"]
+	path = /Users/clementwalter/Documents/claudine/external/zama-marketplace
+	url = git@github.com:zama-ai/zama-marketplace.git
