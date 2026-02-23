@@ -36,7 +36,7 @@ SKILL_FILENAME = "SKILL.md"
 EXTERNAL_DIR = "external"
 SKILLS_DIR = ".claude/skills"
 AGENTS_DIR = ".claude/agents"
-AGENT_SOURCE_DIRS = ("agents", "subagents")
+AGENT_SOURCE_DIRS = ("agents", "subagents", ".claude/agents", ".claude/subagents")
 ENV_REPO_ROOT = "CLAUDINE_REPO"
 
 logger = logging.getLogger(__name__)
@@ -109,10 +109,15 @@ def minimal_skill_dirs(dirs: list[Path], submodule_root: Path) -> list[Path]:
 
 def discover_agent_files(submodule_root: Path) -> list[tuple[Path, Path]]:
     """
-    Discover subagent definition files under ``agents/`` and ``subagents/``.
+    Discover subagent definition files under common agent roots.
 
     Returns tuples of (source_file, relative_target_path), where relative_target_path
     is the path relative to the source folder root to preserve organization.
+    Supported source roots include:
+    - agents/
+    - subagents/
+    - .claude/agents/
+    - .claude/subagents/
     """
     discovered: list[tuple[Path, Path]] = []
     for source_dir_name in AGENT_SOURCE_DIRS:
@@ -317,8 +322,8 @@ def run(
 
     For plain repo URLs:
     - discovers SKILL.md folders and creates flat skill symlinks, and/or
-    - discovers subagent markdown files under agents/ or subagents/ and symlinks
-      them into .claude/agents preserving subfolders.
+    - discovers subagent markdown files under agents/, subagents/, .claude/agents/,
+      or .claude/subagents/ and symlinks them into .claude/agents preserving subfolders.
     For GitHub tree URLs (containing /tree/<branch>/<path>): creates a scaffold skill
     directory named after the repo with a references symlink to the subpath, then
     optionally runs Claude to generate a SKILL.md.
@@ -465,7 +470,10 @@ def run(
         ensure_dir(agents_dir)
         discovered_agents = discover_agent_files(submodule_path)
         if not discovered_agents:
-            logger.info("No agent markdown files found under agents/ or subagents/; no agent symlinks created")
+            logger.info(
+                "No agent markdown files found under agents/, subagents/, .claude/agents/, or .claude/subagents/; "
+                "no agent symlinks created"
+            )
         else:
             for source_file, rel_target in discovered_agents:
                 link_path = agents_dir / rel_target
@@ -549,7 +557,10 @@ def run(
 @click.option(
     "--sync-agents/--no-sync-agents",
     default=None,
-    help="Sync agent symlinks from agents/ or subagents/ (default: prompt in interactive mode)",
+    help=(
+        "Sync agent symlinks from agents/, subagents/, .claude/agents/, or .claude/subagents/ "
+        "(default: prompt in interactive mode)"
+    ),
 )
 def main(
     url: str,

@@ -417,6 +417,15 @@ def test_discover_agent_files_ignores_non_markdown_files(tmp_path: Path) -> None
     assert discovered == []
 
 
+def test_discover_agent_files_finds_dot_claude_agents_markdown_files(tmp_path: Path) -> None:
+    """Markdown files in .claude/agents are discovered with relative target paths."""
+    agent_file = tmp_path / ".claude" / "agents" / "aegis.md"
+    agent_file.parent.mkdir(parents=True)
+    agent_file.write_text("---\nname: aegis\ndescription: test\n---\n")
+    discovered = discover_agent_files(tmp_path)
+    assert discovered == [(agent_file, Path("aegis.md"))]
+
+
 # ---------------------------------------------------------------------------
 # CLI prompt / sync wiring
 # ---------------------------------------------------------------------------
