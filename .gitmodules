@@ -16,3 +16,6 @@
 [submodule "/Users/clementwalter/Documents/claudine/external/zama-marketplace"]
 	path = /Users/clementwalter/Documents/claudine/external/zama-marketplace
 	url = git@github.com:zama-ai/zama-marketplace.git
+[submodule "external/zama-marketplace"]
+	path = external/zama-marketplace
+	url = git@github.com:zama-ai/zama-marketplace.git
