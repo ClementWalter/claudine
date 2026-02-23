@@ -121,6 +121,43 @@ def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _prompt_collision(skill_name: str, link_path: Path, repo_name: str) -> str:
+    """Prompt user for how to handle existing skill target. Returns 'replace', 'keep_both', or 'skip'."""
+    if not sys.stdin.isatty():
+        logger.warning("Skill target already exists and stdin is not a TTY; skipping %s", link_path)
+        return "skip"
+    prompt_msg = (
+        f"Skill target already exists: {link_path}\n"
+        "  [R]eplace, [K]eep both (link as <name>-<repo>), [S]kip? "
+    )
+    while True:
+        try:
+            choice = input(prompt_msg).strip().upper() or "S"
+        except (EOFError, KeyboardInterrupt):
+            logger.info("Interrupted; skipping %s", skill_name)
+            return "skip"
+        if choice in ("R", "REPLACE"):
+            return "replace"
+        if choice in ("K", "KEEP"):
+            return "keep_both"
+        if choice in ("S", "SKIP"):
+            return "skip"
+        click.echo("  Please enter R, K, or S.", err=True)
+
+
+def _unique_skill_link_path(skills_dir: Path, base_name: str, repo_name: str) -> Path:
+    """Return a path under skills_dir for a skill name that does not yet exist (for keep_both)."""
+    candidate = skills_dir / f"{base_name}-{repo_name}"
+    if not candidate.exists() and not candidate.is_symlink():
+        return candidate
+    n = 2
+    while True:
+        candidate = skills_dir / f"{base_name}-{repo_name}-{n}"
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+        n += 1
+
+
 def _scaffold_skill_from_subpath(
     skills_dir: Path,
     skill_name: str,
@@ -328,15 +365,27 @@ def run(
             link_path = skills_dir / skill_name
             if link_path.exists() or link_path.is_symlink():
                 if not force:
-                    logger.error("Skill target already exists: %s", link_path)
-                    sys.exit(1)
-                if link_path.is_symlink():
-                    link_path.unlink()
-                elif link_path.is_dir():
-                    shutil.rmtree(link_path)
+                    choice = _prompt_collision(skill_name, link_path, name)
+                    if choice == "skip":
+                        continue
+                    if choice == "keep_both":
+                        link_path = _unique_skill_link_path(skills_dir, skill_name, name)
+                    else:  # replace
+                        if link_path.is_symlink():
+                            link_path.unlink()
+                        elif link_path.is_dir():
+                            shutil.rmtree(link_path)
+                        else:
+                            logger.error("Skill target exists and is a file (not a dir/symlink): %s", link_path)
+                            sys.exit(1)
                 else:
-                    logger.error("Skill target exists and is a file (not a dir/symlink): %s", link_path)
-                    sys.exit(1)
+                    if link_path.is_symlink():
+                        link_path.unlink()
+                    elif link_path.is_dir():
+                        shutil.rmtree(link_path)
+                    else:
+                        logger.error("Skill target exists and is a file (not a dir/symlink): %s", link_path)
+                        sys.exit(1)
             try:
                 rel = Path(os.path.relpath(target, link_path.parent))
             except ValueError:
