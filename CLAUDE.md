@@ -56,6 +56,11 @@ data. Test frameworks have built in tools for this:
   [pytest-xdist](https://pytest-xdist.readthedocs.io/en/stable/) or
   [cargo nextest](https://nexte.st/).
 
+**CRITICAL**: Don't over factorize tests, don't create 2 lines long utils that
+hide the prod code content. Utils in tests should be used mostly for fixtures,
+boilerplate, etc. but not to wrap prod code. Tests need to be readable and
+understandable by a human.
+
 ## Deployment
 
 Always deploy to Scaleway using the skill. If facing issues, update the skill
