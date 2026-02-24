@@ -1,6 +1,9 @@
 ---
 name: slack-user-cli
-description: "Read and write Slack channels, DMs, threads, and search from the terminal using slack_user_cli. Use when the user asks to interact with Slack workspaces, read messages, send messages, or search Slack."
+description:
+  "Read and write Slack channels, DMs, threads, and search from the terminal
+  using slack_user_cli. Use when the user asks to interact with Slack
+  workspaces, read messages, send messages, or search Slack."
 allowed-tools:
   - Bash
   - Read
@@ -9,20 +12,14 @@ allowed-tools:
 # Slack User CLI
 
 Terminal access to Slack using browser session credentials (`xoxc-` token + `d`
-cookie). Located at `/Users/clementwalter/Documents/slack-user-cli/slack_user_cli.py`.
+cookie). Located at `~/.claude/skills/slack-user-cli/scripts/slack_user_cli.py`.
 
 ## Running
 
 All commands use `uv run`:
 
 ```bash
-uv run /Users/clementwalter/Documents/slack-user-cli/slack_user_cli.py <command> [options]
-```
-
-If symlinked to PATH as `slack_user_cli`:
-
-```bash
-slack_user_cli <command> [options]
+uv run ~/.claude/skills/slack-user-cli/scripts/slack_user_cli.py <command> [options]
 ```
 
 ## Authentication
@@ -43,10 +40,10 @@ slack_user_cli login --manual
 
 ## Global Options
 
-| Option | Description |
-|--------|-------------|
+| Option                            | Description                                 |
+| --------------------------------- | ------------------------------------------- |
 | `-w <name>`, `--workspace <name>` | Use a specific workspace instead of default |
-| `--debug` | Enable debug logging |
+| `--debug`                         | Enable debug logging                        |
 
 ## Commands Reference
 
@@ -126,17 +123,17 @@ slack_user_cli -w "Other Workspace" read general --limit 5
 Channel and user data is cached to disk for fast resolution:
 
 - **Location**: `~/.config/slack-user-cli/cache/<workspace>/`
-- **Files**: `channels.json` (name→id map), `users.json` (id→display,
-  name→id, display→id maps)
+- **Files**: `channels.json` (name→id map), `users.json` (id→display, name→id,
+  display→id maps)
 - **TTL**: 1 hour — cache auto-expires and is rebuilt on next use
 - **Refresh**: run `slack_user_cli refresh` to force-rebuild both caches
 - **Behavior**: `resolve_user()` passively reads disk cache, falling back to a
   single `users_info` API call — never triggers a full `users_list` build.
-  `resolve_channel()` and `_resolve_user_by_name()` will auto-build the cache
-  on first use if it doesn't exist.
+  `resolve_channel()` and `_resolve_user_by_name()` will auto-build the cache on
+  first use if it doesn't exist.
 
-Run `refresh` after joining new channels or when user lookups return IDs
-instead of names.
+Run `refresh` after joining new channels or when user lookups return IDs instead
+of names.
 
 ## Key Details
 
@@ -160,9 +157,11 @@ instead of names.
 ## Troubleshooting
 
 - **"Not logged in"**: run `slack_user_cli login --browser` or `--manual`
-- **"Workspace not found"**: check available names with `slack_user_cli workspaces`
+- **"Workspace not found"**: check available names with
+  `slack_user_cli workspaces`
 - **Token expired**: tokens expire on Slack logout; re-run `login`
-- **Too many channels**: `channels` shows only joined by default; this is correct
+- **Too many channels**: `channels` shows only joined by default; this is
+  correct
 - **macOS Keychain prompt**: expected when using `--auto` (cookie decryption)
 - **User shows as ID instead of name**: run `slack_user_cli refresh` to rebuild
   the user cache
