@@ -100,7 +100,7 @@ slack_user_cli dm <user_name_or_id>
 ### Important: DM User Name Resolution
 
 When using `dm`, the USER argument must match the Slack **username** (e.g.
-`mathieu.saugier`), not the display name with spaces (e.g. `Mathieu Saugier`).
+`first.last`), not the display name with spaces (e.g. `First Last`).
 Use `search "from:<username>"` to discover the correct username format.
 
 ### Search
