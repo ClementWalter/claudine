@@ -60,8 +60,9 @@ data. Test frameworks have built in tools for this:
 
 - Don't over factorize tests, don't create 2 lines long utils that hide the prod
   code content. Utils in tests should be used mostly for fixtures, boilerplate,
-  etc. but not to wrap prod code. Tests need to be readable and understandable
-  by a human.
+  etc. but not to wrap prod code.
+- Don't use "mock" term for actual production code. Use "stub" instead. Keep
+  "mock" for code with simplified behavior.
 
 ## Deployment
 
