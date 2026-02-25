@@ -863,19 +863,8 @@ def url_command(ctx: click.Context, slack_url: str, limit: int) -> None:
         if not cursor:
             break
 
-    # If only one message (standalone, no thread), show surrounding context
-    if len(replies) <= 1:
-        try:
-            hist = client.conversations_history(
-                channel=channel_id, latest=message_ts, limit=limit, inclusive=True
-            )
-        except SlackApiError as exc:
-            raise click.ClickException(str(exc)) from exc
-        messages = list(reversed(hist.get("messages", [])))
-        _print_messages(client, messages, workspace=ws)
-    else:
-        replies = replies[:limit]
-        _print_messages(client, replies, workspace=ws)
+    replies = replies[:limit]
+    _print_messages(client, replies, workspace=ws)
 
 
 # -- users --------------------------------------------------------------------
