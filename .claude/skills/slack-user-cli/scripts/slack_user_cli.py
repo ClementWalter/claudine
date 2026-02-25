@@ -909,6 +909,64 @@ def users(ctx: click.Context) -> None:
     console.print(table)
 
 
+# -- user-channels ------------------------------------------------------------
+
+
+@cli.command(name="user-channels")
+@click.argument("user")
+@click.option(
+    "--type",
+    "channel_types",
+    default="public_channel,private_channel",
+    help="Comma-separated channel types to list.",
+)
+@click.pass_context
+def user_channels(ctx: click.Context, user: str, channel_types: str) -> None:
+    """List channels a user is a member of."""
+    client = get_client(workspace=ctx.obj["workspace"])
+    ws = ctx.obj["workspace_name"]
+
+    # Resolve user name to ID if needed
+    user_id = user
+    if not (user.startswith("U") and user[1:].isalnum()):
+        user_id = _resolve_user_by_name(client, user, workspace=ws)
+
+    display_name = resolve_user(client, user_id, workspace=ws)
+    table = Table(title=f"Channels for {display_name}")
+    table.add_column("Name", style="cyan")
+    table.add_column("Type", style="magenta")
+    table.add_column("Members", justify="right")
+    table.add_column("Topic")
+
+    cursor = None
+    while True:
+        kwargs: dict = {"user": user_id, "types": channel_types, "limit": 200}
+        if cursor:
+            kwargs["cursor"] = cursor
+        try:
+            resp = client.users_conversations(**kwargs)
+        except SlackApiError as exc:
+            raise click.ClickException(str(exc)) from exc
+
+        for ch in resp["channels"]:
+            ch_type = _channel_type_label(ch)
+            topic = ch.get("topic", {}).get("value", "")
+            if len(topic) > 60:
+                topic = topic[:57] + "…"
+            table.add_row(
+                ch.get("name", ch["id"]),
+                ch_type,
+                str(ch.get("num_members", "")),
+                topic,
+            )
+
+        cursor = resp.get("response_metadata", {}).get("next_cursor")
+        if not cursor:
+            break
+
+    console.print(table)
+
+
 # -- send ---------------------------------------------------------------------
 
 

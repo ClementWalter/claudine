@@ -80,6 +80,10 @@ slack_user_cli url "https://workspace.slack.com/archives/C.../p..."
 
 # List workspace members
 slack_user_cli users
+
+# List channels a user is a member of (by username or user ID)
+slack_user_cli user-channels <user_name_or_id>
+slack_user_cli user-channels <user_name_or_id> --type "public_channel,private_channel,mpim"
 ```
 
 ### Writing
