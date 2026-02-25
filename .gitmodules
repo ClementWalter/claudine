@@ -28,3 +28,6 @@
 [submodule "external/Continuous-Claude-v3"]
 	path = external/Continuous-Claude-v3
 	url = https://github.com/parcadei/Continuous-Claude-v3/
+[submodule "/Users/clementwalter/Documents/claudine/external/surf-cli"]
+	path = /Users/clementwalter/Documents/claudine/external/surf-cli
+	url = git@github.com:nicobailon/surf-cli.git
