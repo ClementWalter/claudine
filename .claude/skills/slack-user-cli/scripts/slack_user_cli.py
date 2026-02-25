@@ -920,8 +920,14 @@ def users(ctx: click.Context) -> None:
     default="public_channel,private_channel",
     help="Comma-separated channel types to list.",
 )
+@click.option(
+    "--plain",
+    is_flag=True,
+    default=False,
+    help="Output one channel name per line (no table formatting).",
+)
 @click.pass_context
-def user_channels(ctx: click.Context, user: str, channel_types: str) -> None:
+def user_channels(ctx: click.Context, user: str, channel_types: str, plain: bool) -> None:
     """List channels a user is a member of."""
     client = get_client(workspace=ctx.obj["workspace"])
     ws = ctx.obj["workspace_name"]
@@ -931,13 +937,8 @@ def user_channels(ctx: click.Context, user: str, channel_types: str) -> None:
     if not (user.startswith("U") and user[1:].isalnum()):
         user_id = _resolve_user_by_name(client, user, workspace=ws)
 
-    display_name = resolve_user(client, user_id, workspace=ws)
-    table = Table(title=f"Channels for {display_name}")
-    table.add_column("Name", style="cyan")
-    table.add_column("Type", style="magenta")
-    table.add_column("Members", justify="right")
-    table.add_column("Topic")
-
+    # Collect all channels first so both formats can use the same data
+    channels_list: list[dict] = []
     cursor = None
     while True:
         kwargs: dict = {"user": user_id, "types": channel_types, "limit": 200}
@@ -948,21 +949,34 @@ def user_channels(ctx: click.Context, user: str, channel_types: str) -> None:
         except SlackApiError as exc:
             raise click.ClickException(str(exc)) from exc
 
-        for ch in resp["channels"]:
-            ch_type = _channel_type_label(ch)
-            topic = ch.get("topic", {}).get("value", "")
-            if len(topic) > 60:
-                topic = topic[:57] + "…"
-            table.add_row(
-                ch.get("name", ch["id"]),
-                ch_type,
-                str(ch.get("num_members", "")),
-                topic,
-            )
-
+        channels_list.extend(resp["channels"])
         cursor = resp.get("response_metadata", {}).get("next_cursor")
         if not cursor:
             break
+
+    if plain:
+        for ch in channels_list:
+            click.echo(ch.get("name", ch["id"]))
+        return
+
+    display_name = resolve_user(client, user_id, workspace=ws)
+    table = Table(title=f"Channels for {display_name}")
+    table.add_column("Name", style="cyan")
+    table.add_column("Type", style="magenta")
+    table.add_column("Members", justify="right")
+    table.add_column("Topic")
+
+    for ch in channels_list:
+        ch_type = _channel_type_label(ch)
+        topic = ch.get("topic", {}).get("value", "")
+        if len(topic) > 60:
+            topic = topic[:57] + "…"
+        table.add_row(
+            ch.get("name", ch["id"]),
+            ch_type,
+            str(ch.get("num_members", "")),
+            topic,
+        )
 
     console.print(table)
 
