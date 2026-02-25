@@ -90,11 +90,11 @@ Posting to a main channel is visible to everyone and cannot be undone. Always
 confirm with the user first. Thread replies (`--thread`) do not require this
 approval.
 
-**Permalink timestamp parsing:** When replying to a thread from a Slack permalink
-URL (e.g. `https://...slack.com/archives/C.../p1772027814307689`), extract the
-thread_ts by inserting a dot before the last 6 digits of the `p` value:
-`p1772027814307689` → `1772027814.307689`. Double-check this conversion before
-sending.
+**Permalink timestamp parsing:** When replying to a thread from a Slack
+permalink URL (e.g. `https://...slack.com/archives/C.../p1772027814307689`),
+extract the thread_ts by inserting a dot before the last 6 digits of the `p`
+value: `p1772027814307689` → `1772027814.307689`. Double-check this conversion
+before sending.
 
 ```bash
 # Send a message to a channel (use --thread to reply in a thread)
@@ -109,11 +109,33 @@ slack_user_cli dm <user_name_or_id> "reply text" --thread <message_ts>
 slack_user_cli dm <user_name_or_id>
 ```
 
+### File Uploads
+
+**Same approval rules as Writing above** — uploading to a main channel (without
+`--thread`) requires `AskUserQuestion` confirmation first.
+
+```bash
+# Upload a file to a channel
+slack_user_cli upload <channel_name_or_id> /path/to/file.png
+
+# Upload with a message and title
+slack_user_cli upload <channel_name_or_id> /path/to/file.png --message "Here's the report" --title "Q1 Report"
+
+# Upload in a thread
+slack_user_cli upload <channel_name_or_id> /path/to/file.png --thread <message_ts>
+
+# Upload a file via DM
+slack_user_cli dm-upload <user_name_or_id> /path/to/file.png
+
+# DM upload with message and in a thread
+slack_user_cli dm-upload <user_name_or_id> /path/to/file.png --message "See attached" --thread <message_ts>
+```
+
 ### Important: DM User Name Resolution
 
 When using `dm`, the USER argument must match the Slack **username** (e.g.
-`first.last`), not the display name with spaces (e.g. `First Last`).
-Use `search "from:<username>"` to discover the correct username format.
+`first.last`), not the display name with spaces (e.g. `First Last`). Use
+`search "from:<username>"` to discover the correct username format.
 
 ### Search
 

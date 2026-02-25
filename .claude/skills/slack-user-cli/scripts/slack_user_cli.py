@@ -936,6 +936,47 @@ def send(ctx: click.Context, channel: str, message: str, thread_ts: str | None) 
     console.print(f"[green]Message sent[/] (ts={ts})")
 
 
+# -- upload -------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("channel")
+@click.argument("file_path", type=click.Path(exists=True))
+@click.option("--thread", "thread_ts", default=None, help="Upload in thread.")
+@click.option("--message", "initial_comment", default=None, help="Message to accompany the file.")
+@click.option("--title", default=None, help="File title (defaults to filename).")
+@click.pass_context
+def upload(
+    ctx: click.Context,
+    channel: str,
+    file_path: str,
+    thread_ts: str | None,
+    initial_comment: str | None,
+    title: str | None,
+) -> None:
+    """Upload a file to a channel."""
+    client = get_client(workspace=ctx.obj["workspace"])
+    ws = ctx.obj["workspace_name"]
+    channel_id = resolve_channel(client, channel, workspace=ws)
+
+    kwargs: dict = {"channel": channel_id, "file": file_path}
+    if thread_ts:
+        kwargs["thread_ts"] = thread_ts
+    if initial_comment:
+        kwargs["initial_comment"] = initial_comment
+    if title:
+        kwargs["title"] = title
+
+    try:
+        resp = client.files_upload_v2(**kwargs)
+    except SlackApiError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    # files_upload_v2 returns file info in resp["file"]
+    file_id = resp.get("file", {}).get("id", "unknown")
+    console.print(f"[green]File uploaded[/] (id={file_id})")
+
+
 # -- dm -----------------------------------------------------------------------
 
 
@@ -985,6 +1026,58 @@ def dm(ctx: click.Context, user: str, message: str | None, limit: int, thread_ts
             raise click.ClickException(str(exc)) from exc
         messages = list(reversed(hist.get("messages", [])))
         _print_messages(client, messages, workspace=ws)
+
+
+# -- dm-upload ----------------------------------------------------------------
+
+
+@cli.command(name="dm-upload")
+@click.argument("user")
+@click.argument("file_path", type=click.Path(exists=True))
+@click.option("--thread", "thread_ts", default=None, help="Upload in thread.")
+@click.option("--message", "initial_comment", default=None, help="Message to accompany the file.")
+@click.option("--title", default=None, help="File title (defaults to filename).")
+@click.pass_context
+def dm_upload(
+    ctx: click.Context,
+    user: str,
+    file_path: str,
+    thread_ts: str | None,
+    initial_comment: str | None,
+    title: str | None,
+) -> None:
+    """Upload a file to a user via DM."""
+    client = get_client(workspace=ctx.obj["workspace"])
+    ws = ctx.obj["workspace_name"]
+
+    # Resolve user name to ID if needed (IDs start with U)
+    user_id = user
+    if not (user.startswith("U") and user[1:].isalnum()):
+        user_id = _resolve_user_by_name(client, user, workspace=ws)
+
+    # Open (or retrieve) the DM channel
+    try:
+        resp = client.conversations_open(users=[user_id])
+    except SlackApiError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    dm_channel = resp["channel"]["id"]
+
+    kwargs: dict = {"channel": dm_channel, "file": file_path}
+    if thread_ts:
+        kwargs["thread_ts"] = thread_ts
+    if initial_comment:
+        kwargs["initial_comment"] = initial_comment
+    if title:
+        kwargs["title"] = title
+
+    try:
+        upload_resp = client.files_upload_v2(**kwargs)
+    except SlackApiError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    file_id = upload_resp.get("file", {}).get("id", "unknown")
+    console.print(f"[green]File uploaded via DM[/] (id={file_id})")
 
 
 def _resolve_user_by_name(
