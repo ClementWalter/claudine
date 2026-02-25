@@ -148,6 +148,19 @@ When using `dm`, the USER argument must match the Slack **username** (e.g.
 slack_user_cli search "query" --count 20 --page 1
 ```
 
+### Canvases
+
+```bash
+# Read a canvas by URL (outputs plain text by default)
+slack_user_cli canvas "https://workspace.slack.com/docs/TEAM_ID/FILE_ID"
+
+# Read a canvas by file ID
+slack_user_cli canvas F0ADRFZ3UUV
+
+# Get raw HTML output
+slack_user_cli canvas "https://workspace.slack.com/docs/TEAM_ID/FILE_ID" --html
+```
+
 ### Cross-workspace Usage
 
 ```bash

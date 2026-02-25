@@ -6,6 +6,7 @@
 #     "slacktokens>=0.2.6",
 #     "click>=8.0",
 #     "rich>=13.0",
+#     "requests>=2.31",
 # ]
 # ///
 """Slack User CLI — terminal access to Slack using browser session credentials.
@@ -356,6 +357,96 @@ def parse_slack_url(url: str) -> tuple[str, str, str]:
     message_ts = f"{raw_ts[:-6]}.{raw_ts[-6:]}"
 
     return workspace, channel_id, message_ts
+
+
+# Canvas URL pattern: https://<workspace>.slack.com/docs/<team_id>/<file_id>
+_CANVAS_URL_PATH_RE = re.compile(r"^/docs/([A-Z0-9]+)/([A-Z0-9]+)$")
+
+
+def parse_canvas_url(url: str) -> str:
+    """Extract the file ID from a Slack canvas URL.
+
+    Canvas URLs follow: https://<workspace>.slack.com/docs/<team_id>/<file_id>
+    Returns the file_id needed for the files.info API call.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+
+    if not hostname.endswith(".slack.com"):
+        raise click.ClickException(
+            f"Not a Slack URL (expected *.slack.com): {url}"
+        )
+
+    match = _CANVAS_URL_PATH_RE.match(parsed.path)
+    if not match:
+        raise click.ClickException(
+            f"Malformed Slack canvas URL path: {parsed.path}"
+        )
+
+    return match.group(2)
+
+
+def _fetch_canvas_content(client: WebClient, file_id: str) -> tuple[str, str]:
+    """Fetch canvas HTML content via files.info private URL.
+
+    Returns (title, html_content). The canvas is stored as a Quip document
+    accessible through the file's url_private endpoint.
+    """
+    import requests  # noqa: PLC0415
+
+    try:
+        resp = client.api_call("files.info", params={"file": file_id})
+    except SlackApiError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    file_info = resp.get("file", {})
+    title = file_info.get("title", "Untitled")
+    url_private = file_info.get("url_private")
+
+    if not url_private:
+        raise click.ClickException(
+            f"No private URL found for file {file_id}. "
+            "The canvas may not be accessible."
+        )
+
+    # Download content using the same auth headers as the WebClient
+    headers = dict(client.headers or {})
+    headers["Authorization"] = f"Bearer {client.token}"
+    dl_resp = requests.get(url_private, headers=headers, timeout=30)
+    dl_resp.raise_for_status()
+
+    return title, dl_resp.text
+
+
+def _html_to_text(html: str) -> str:
+    """Convert simple canvas HTML to readable plain text.
+
+    Handles headings, lists, links, and paragraphs without requiring
+    a full HTML parser — canvases use a small, predictable HTML subset.
+    """
+    text = html
+    # Convert headings to markdown-style
+    text = re.sub(r"<h1[^>]*>(.*?)</h1>", r"# \1\n", text)
+    text = re.sub(r"<h2[^>]*>(.*?)</h2>", r"## \1\n", text)
+    text = re.sub(r"<h3[^>]*>(.*?)</h3>", r"### \1\n", text)
+    # Convert links to markdown
+    text = re.sub(r'<a\s+href="([^"]*)"[^>]*>(.*?)</a>', r"[\2](\1)", text)
+    # Convert list items
+    text = re.sub(r"<li[^>]*>(.*?)</li>", r"- \1", text)
+    # Line breaks
+    text = re.sub(r"<br\s*/?>", "\n", text)
+    # Strip remaining tags
+    text = re.sub(r"<[^>]+>", "", text)
+    # Clean up whitespace
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    # Decode HTML entities
+    text = text.replace("&amp;", "&")
+    text = text.replace("&lt;", "<")
+    text = text.replace("&gt;", ">")
+    text = text.replace("&quot;", '"')
+    text = text.replace("&#39;", "'")
+    text = text.replace("\u200b", "")  # zero-width space
+    return text.strip()
 
 
 # -- CLI group ----------------------------------------------------------------
@@ -1226,6 +1317,34 @@ def search(ctx: click.Context, query: str, count: int, page: int) -> None:
         line.append(f"{username}: ", style="bold")
         line.append(text)
         console.print(line)
+
+
+# -- canvas -------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("canvas_url_or_id")
+@click.option("--html", "raw_html", is_flag=True, default=False, help="Output raw HTML instead of plain text.")
+@click.pass_context
+def canvas(ctx: click.Context, canvas_url_or_id: str, raw_html: bool) -> None:
+    """Read a Slack canvas by URL or file ID."""
+    client = get_client(workspace=ctx.obj["workspace"])
+
+    # Accept both full URLs and bare file IDs
+    if canvas_url_or_id.startswith("http"):
+        file_id = parse_canvas_url(canvas_url_or_id)
+    else:
+        file_id = canvas_url_or_id
+
+    title, html_content = _fetch_canvas_content(client, file_id)
+
+    if raw_html:
+        console.print(f"[bold]{title}[/]\n")
+        click.echo(html_content)
+    else:
+        text = _html_to_text(html_content)
+        console.print(f"[bold]{title}[/]\n")
+        console.print(text)
 
 
 # -- Output helpers -----------------------------------------------------------
