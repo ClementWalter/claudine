@@ -84,6 +84,18 @@ slack_user_cli users
 
 ### Writing
 
+**CRITICAL: Before sending any message to a main channel (i.e. a `send` command
+WITHOUT `--thread`), you MUST use `AskUserQuestion` to get explicit approval.**
+Posting to a main channel is visible to everyone and cannot be undone. Always
+confirm with the user first. Thread replies (`--thread`) do not require this
+approval.
+
+**Permalink timestamp parsing:** When replying to a thread from a Slack permalink
+URL (e.g. `https://...slack.com/archives/C.../p1772027814307689`), extract the
+thread_ts by inserting a dot before the last 6 digits of the `p` value:
+`p1772027814307689` → `1772027814.307689`. Double-check this conversion before
+sending.
+
 ```bash
 # Send a message to a channel (use --thread to reply in a thread)
 slack_user_cli send <channel_name_or_id> "message text"
