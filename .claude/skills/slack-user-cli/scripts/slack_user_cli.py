@@ -1347,6 +1347,91 @@ def canvas(ctx: click.Context, canvas_url_or_id: str, raw_html: bool) -> None:
         console.print(text)
 
 
+@cli.command("canvas-edit")
+@click.argument("canvas_url_or_id")
+@click.argument("content", required=False)
+@click.option(
+    "--operation",
+    type=click.Choice(
+        ["insert_at_end", "insert_at_start", "replace"],
+        case_sensitive=False,
+    ),
+    default="insert_at_end",
+    help="Edit operation (default: insert_at_end).",
+)
+@click.option(
+    "--section-id",
+    default=None,
+    help="Section ID for targeted replace/insert operations.",
+)
+@click.pass_context
+def canvas_edit(
+    ctx: click.Context,
+    canvas_url_or_id: str,
+    content: str | None,
+    operation: str,
+    section_id: str | None,
+) -> None:
+    """Edit a Slack canvas by URL or file ID.
+
+    Content can be passed as an argument or piped via stdin.
+    Accepts markdown — Slack converts it to canvas formatting.
+
+    Examples:
+
+        # Append markdown to a canvas
+        slack_user_cli canvas-edit F0ADRFZ3UUV "## New Section\\nSome text"
+
+        # Replace entire canvas content
+        slack_user_cli canvas-edit F0ADRFZ3UUV "## Fresh Start" --operation replace
+
+        # Pipe content from a file
+        cat summary.md | slack_user_cli canvas-edit F0ADRFZ3UUV --operation replace
+    """
+    import sys  # noqa: PLC0415
+
+    client = get_client(workspace=ctx.obj["workspace"])
+
+    # Accept both full URLs and bare file IDs.
+    if canvas_url_or_id.startswith("http"):
+        file_id = parse_canvas_url(canvas_url_or_id)
+    else:
+        file_id = canvas_url_or_id
+
+    # Read content from argument or stdin.
+    if content is None:
+        if sys.stdin.isatty():
+            raise click.ClickException(
+                "No content provided. Pass as argument or pipe via stdin."
+            )
+        content = sys.stdin.read()
+
+    if not content.strip():
+        raise click.ClickException("Content is empty — nothing to write.")
+
+    change: dict = {
+        "operation": operation,
+        "document_content": {"type": "markdown", "markdown": content},
+    }
+    if section_id is not None:
+        change["section_id"] = section_id
+
+    try:
+        resp = client.api_call(
+            "canvases.edit",
+            json={"canvas_id": file_id, "changes": [change]},
+        )
+    except SlackApiError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if not resp.get("ok"):
+        error = resp.get("error", "unknown_error")
+        detail = resp.get("detail", "")
+        raise click.ClickException(f"canvases.edit failed: {error} — {detail}")
+
+    console.print(f"[green]Canvas {file_id} updated ({operation}).[/]")
+
+
 # -- Output helpers -----------------------------------------------------------
 
 
