@@ -159,6 +159,18 @@ slack_user_cli canvas F0ADRFZ3UUV
 
 # Get raw HTML output
 slack_user_cli canvas "https://workspace.slack.com/docs/TEAM_ID/FILE_ID" --html
+
+# Append markdown to a canvas (default: insert_at_end)
+slack_user_cli canvas-edit F0ADRFZ3UUV "## New Section\nSome text"
+
+# Replace entire canvas content
+slack_user_cli canvas-edit F0ADRFZ3UUV "## Fresh Start" --operation replace
+
+# Prepend content
+slack_user_cli canvas-edit F0ADRFZ3UUV "## Header" --operation insert_at_start
+
+# Pipe content from a file or heredoc
+cat summary.md | slack_user_cli canvas-edit F0ADRFZ3UUV --operation replace
 ```
 
 ### Cross-workspace Usage
