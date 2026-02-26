@@ -626,8 +626,6 @@ class TestFetchPageWithSurf:
         screenshot_dir = tmp_dir / "screenshots"
         screenshot_dir.mkdir()
 
-        call_count = {"screenshot": 0}
-
         def stub_run_surf(args, *, timeout=60):
             # -- Handle --tab-id prefixed calls
             if args[0] == "--tab-id":
@@ -637,21 +635,24 @@ class TestFetchPageWithSurf:
             if actual_args[0] == "navigate":
                 return ""
             if actual_args[0] == "tab.list":
-                return "999\tTest\thttps://example.com/blocked\n"
+                # -- Return two tabs so _ensure_helper_tab skips helper creation
+                return (
+                    "999\tTest\thttps://example.com/blocked\n"
+                    "888\tOther\thttps://other.com\n"
+                )
             if actual_args[0] == "js":
                 # -- Simulate JS being blocked
                 raise RuntimeError("surf command failed")
             if actual_args[0] == "page.read":
                 return "--- Page Text ---\nSome article text"
             if actual_args[0] == "screenshot":
-                # -- Save a real image to the path surf would use
-                for i, a in enumerate(actual_args):
-                    if a == "--path":
-                        save_path = Path(actual_args[i + 1])
-                        save_path.parent.mkdir(parents=True, exist_ok=True)
-                        img.save(str(save_path), "PNG")
-                        return f"Saved to {save_path} (800x600)"
-                return ""
+                # -- Save to a real temp file (surf saves to /tmp/surf-snap-*)
+                fd, snap_path = tempfile.mkstemp(
+                    prefix="surf-snap-", suffix=".png", dir="/tmp"
+                )
+                os.close(fd)
+                img.save(snap_path, "PNG")
+                return f"Saved to {snap_path} (800x600)"
             return ""
 
         with (

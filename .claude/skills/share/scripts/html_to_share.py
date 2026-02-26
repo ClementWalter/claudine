@@ -535,34 +535,75 @@ def _try_surf_with_tab(
         return None
 
 
+def _ensure_helper_tab() -> str | None:
+    """Open a helper blank tab — surf screenshots timeout with only one tab.
+
+    Returns the helper tab ID so it can be closed later, or None if not needed.
+    """
+    tab_list = _try_surf(["tab.list"], timeout=10)
+    if tab_list is None:
+        return None
+
+    tab_count = len([l for l in tab_list.strip().splitlines() if l.strip()])
+    if tab_count <= 1:
+        logger.debug("Only one tab — creating helper tab for screenshot")
+        output = _try_surf(["tab.new", "about:blank"], timeout=10)
+        if output:
+            # -- Parse: "Created tab <id>: about:blank"
+            for line in output.splitlines():
+                if line.startswith("Created tab "):
+                    return line.split("Created tab ", 1)[1].split(":")[0].strip()
+    return None
+
+
+def _parse_surf_screenshot_path(output: str) -> Path | None:
+    """Parse the saved file path from surf screenshot output.
+
+    surf saves to /tmp/surf-snap-<timestamp>.png regardless of --path arg.
+    """
+    for line in output.splitlines():
+        if line.startswith("Saved to "):
+            actual = line.split("Saved to ", 1)[1].split(" (")[0].strip()
+            path = Path(actual)
+            if path.is_file():
+                return path
+    return None
+
+
 def _capture_screenshot_base64(
     page_dir: Path, *, tab_id: str | None = None
 ) -> str | None:
     """Take a screenshot via surf and return it as a base64 JPEG data URI.
 
-    Saves the raw PNG to page_dir for caching, returns compressed JPEG base64.
+    Handles edge cases: opens helper tab if needed (surf times out with only
+    one tab), switches to correct tab, and parses actual saved file path.
     """
-    screenshot_path = page_dir / "screenshot.png"
-    args = ["screenshot", "--path", str(screenshot_path)]
-    if tab_id:
-        args = ["--tab-id", tab_id] + args[:]
-        # -- Reconstruct: surf --tab-id <id> screenshot --path <path>
-        args = ["--tab-id", tab_id, "screenshot", "--path", str(screenshot_path)]
+    # -- Workaround: surf screenshots timeout when there's only one tab
+    helper_tab = _ensure_helper_tab()
 
-    output = _try_surf(args, timeout=15)
+    # -- Switch back to target tab after helper tab steals focus
+    if helper_tab and tab_id:
+        _try_surf(["tab.switch", tab_id], timeout=5)
+        time.sleep(0.5)
+
+    # -- Take the screenshot (surf saves to /tmp/surf-snap-*.png)
+    args = ["screenshot"]
+    if tab_id:
+        args = ["--tab-id", tab_id, "screenshot"]
+
+    output = _try_surf(args, timeout=30)
+
+    # -- Clean up helper tab
+    if helper_tab:
+        _try_surf(["tab.close", helper_tab], timeout=5)
+
     if output is None:
+        logger.warning("Screenshot capture failed")
         return None
 
-    # -- surf saves to its own path; find the actual file from output
-    # -- Output: "Saved to /tmp/surf-snap-<ts>.png (...)"
-    saved_path = screenshot_path
-    for line in output.splitlines():
-        if line.startswith("Saved to "):
-            actual_path = line.split("Saved to ", 1)[1].split(" (")[0].strip()
-            saved_path = Path(actual_path)
-            break
-
-    if not saved_path.is_file():
+    saved_path = _parse_surf_screenshot_path(output)
+    if saved_path is None:
+        logger.warning("Could not find saved screenshot file")
         return None
 
     # -- Compress to JPEG and encode as base64
