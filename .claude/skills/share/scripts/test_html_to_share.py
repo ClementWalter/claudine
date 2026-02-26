@@ -6,6 +6,7 @@
 #   "markdown>=3.5",
 #   "Pillow>=10.0",
 #   "beautifulsoup4>=4.12",
+#   "requests>=2.31",
 #   "pytest>=8.0",
 # ]
 # ///
@@ -13,10 +14,13 @@
 
 import base64
 import io
+import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from PIL import Image
@@ -24,11 +28,18 @@ from PIL import Image
 # -- Import the module under test
 sys.path.insert(0, str(Path(__file__).parent))
 from html_to_share import (
+    _inline_remote_images,
+    _is_url,
+    _log_output_stats,
+    _run_surf,
+    _slug_from_url,
     clean_markdown,
+    fetch_page_with_surf,
     find_files_dir,
     image_to_base64,
     inline_images,
     markdown_to_html,
+    process_html,
     resolve_image_path,
 )
 
@@ -313,6 +324,243 @@ class TestIntegrationSimplePage:
         assert "data:image/jpeg;base64," in content
         assert "_files" not in content
         assert "My Simple Article" in content
+
+
+# -- Tests for _is_url
+
+
+class TestIsUrl:
+    def test_https_url(self):
+        assert _is_url("https://www.ft.com/article/123") is True
+
+    def test_http_url(self):
+        assert _is_url("http://example.com") is True
+
+    def test_local_file_path(self):
+        assert _is_url("/Users/test/article.html") is False
+
+    def test_relative_path(self):
+        assert _is_url("./article.html") is False
+
+
+# -- Tests for _slug_from_url
+
+
+class TestSlugFromUrl:
+    def test_produces_lowercase_slug(self):
+        slug = _slug_from_url("https://www.ft.com/content/abc-123")
+        assert slug == slug.lower()
+
+    def test_includes_hash_suffix(self):
+        slug = _slug_from_url("https://www.ft.com/content/abc-123")
+        # -- Slug should end with an 8-char hex hash
+        parts = slug.rsplit("-", 1)
+        assert len(parts[-1]) == 8
+
+    def test_different_urls_produce_different_slugs(self):
+        slug_a = _slug_from_url("https://example.com/article-one")
+        slug_b = _slug_from_url("https://example.com/article-two")
+        assert slug_a != slug_b
+
+    def test_no_special_characters(self):
+        slug = _slug_from_url("https://www.ft.com/content/some article?ref=home")
+        # -- Only lowercase alphanumeric and hyphens
+        import re
+
+        assert re.match(r"^[a-z0-9-]+$", slug)
+
+
+# -- Tests for _run_surf
+
+
+class TestRunSurf:
+    def test_raises_on_missing_surf(self):
+        """Should raise RuntimeError when surf CLI is not found."""
+        with patch(
+            "html_to_share.subprocess.run",
+            side_effect=FileNotFoundError("No such file"),
+        ):
+            with pytest.raises(RuntimeError, match="surf CLI not found"):
+                _run_surf(["navigate", "https://example.com"])
+
+    def test_raises_on_timeout(self):
+        """Should raise RuntimeError when surf times out."""
+        with patch(
+            "html_to_share.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="surf", timeout=60),
+        ):
+            with pytest.raises(RuntimeError, match="timed out"):
+                _run_surf(["navigate", "https://example.com"])
+
+    def test_raises_on_nonzero_exit(self):
+        """Should raise RuntimeError when surf exits with error."""
+        stub_result = MagicMock()
+        stub_result.returncode = 1
+        stub_result.stderr = "some error"
+        with patch("html_to_share.subprocess.run", return_value=stub_result):
+            with pytest.raises(RuntimeError, match="surf command failed"):
+                _run_surf(["navigate", "https://example.com"])
+
+    def test_returns_stdout_on_success(self):
+        """Should return stdout when surf succeeds."""
+        stub_result = MagicMock()
+        stub_result.returncode = 0
+        stub_result.stdout = "<html>test</html>"
+        with patch("html_to_share.subprocess.run", return_value=stub_result):
+            result = _run_surf(["js", "document.title"])
+            assert result == "<html>test</html>"
+
+
+# -- Tests for _inline_remote_images
+
+
+class TestInlineRemoteImages:
+    def test_inlines_remote_jpeg(self):
+        """Should download and inline a remote JPEG image."""
+        # -- Create a small JPEG in memory to use as stub response
+        img = Image.new("RGB", (50, 50), color="red")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        jpeg_bytes = buf.getvalue()
+
+        stub_response = MagicMock()
+        stub_response.content = jpeg_bytes
+        stub_response.raise_for_status = MagicMock()
+
+        md = "# Title\n\n![Photo](https://example.com/photo.jpg)"
+        with patch("html_to_share.requests.get", return_value=stub_response):
+            result, count = _inline_remote_images(md)
+
+        assert count == 1
+        assert "data:image/jpeg;base64," in result
+
+    def test_skips_local_images(self):
+        """Should not touch local image references."""
+        md = "# Title\n\n![Photo](./local/photo.jpg)"
+        result, count = _inline_remote_images(md)
+        assert count == 0
+        assert "./local/photo.jpg" in result
+
+    def test_handles_download_failure_gracefully(self):
+        """Should keep original URL when download fails."""
+        md = "# Title\n\n![Photo](https://example.com/broken.jpg)"
+        with patch(
+            "html_to_share.requests.get",
+            side_effect=Exception("Connection failed"),
+        ):
+            result, count = _inline_remote_images(md)
+
+        assert count == 0
+        assert "https://example.com/broken.jpg" in result
+
+
+# -- Tests for process_html
+
+
+class TestProcessHtml:
+    def test_produces_self_contained_html(self, tmp_dir):
+        """Full pipeline via process_html: HTML with image → shareable file."""
+        html_content = """<html>
+<head><title>Test</title></head>
+<body>
+<h1>Pipeline Test</h1>
+<p>Content here.</p>
+<img src="./Pipeline Test_files/pic.jpg" alt="A pic">
+</body>
+</html>"""
+        html_path = tmp_dir / "Pipeline Test.html"
+        html_path.write_text(html_content)
+
+        files_dir = tmp_dir / "Pipeline Test_files"
+        files_dir.mkdir()
+        img = Image.new("RGB", (200, 100), color="green")
+        img.save(str(files_dir / "pic.jpg"), "JPEG")
+
+        output_path = tmp_dir / "output-share.html"
+        result_path, img_count = process_html(html_path, files_dir, output_path)
+
+        assert result_path.exists()
+        assert img_count >= 1
+
+    def test_works_without_files_dir(self, tmp_dir):
+        """process_html should work even with no companion directory."""
+        html_content = "<html><body><h1>No Images</h1><p>Just text.</p></body></html>"
+        html_path = tmp_dir / "text-only.html"
+        html_path.write_text(html_content)
+
+        output_path = tmp_dir / "text-only-share.html"
+        result_path, img_count = process_html(html_path, None, output_path)
+
+        assert result_path.exists()
+        assert img_count == 0
+        content = result_path.read_text()
+        assert "No Images" in content
+
+
+# -- Tests for fetch_page_with_surf
+
+
+class TestFetchPageWithSurf:
+    def test_creates_cache_directory_and_html(self, tmp_dir):
+        """Should create cache dir, save HTML, and download images."""
+        # -- Stub all surf calls
+        def stub_run_surf(args, *, timeout=60):
+            if args[0] == "navigate":
+                return ""
+            if args[0] == "js" and "outerHTML" in args[1]:
+                return '"<html><body><h1>Test</h1></body></html>"'
+            if args[0] == "js":
+                return json.dumps([])
+            return ""
+
+        with (
+            patch("html_to_share._run_surf", side_effect=stub_run_surf),
+            patch("html_to_share.CACHE_DIR", tmp_dir / "cache"),
+            patch("html_to_share.time.sleep"),
+        ):
+            html_path, files_dir = fetch_page_with_surf(
+                "https://example.com/article"
+            )
+
+        assert html_path.exists()
+        assert files_dir.is_dir()
+        content = html_path.read_text()
+        assert "<h1>Test</h1>" in content
+
+    def test_downloads_images_from_page(self, tmp_dir):
+        """Should download images found in the page."""
+        # -- Create a stub image for the HTTP response
+        img = Image.new("RGB", (50, 50), color="blue")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        jpeg_bytes = buf.getvalue()
+
+        def stub_run_surf(args, *, timeout=60):
+            if args[0] == "navigate":
+                return ""
+            if args[0] == "js" and "outerHTML" in args[1]:
+                return '"<html><body><img src=\\"https://cdn.example.com/pic.jpg\\"></body></html>"'
+            if args[0] == "js":
+                return json.dumps(["https://cdn.example.com/pic.jpg"])
+            return ""
+
+        stub_response = MagicMock()
+        stub_response.content = jpeg_bytes
+        stub_response.raise_for_status = MagicMock()
+
+        with (
+            patch("html_to_share._run_surf", side_effect=stub_run_surf),
+            patch("html_to_share.CACHE_DIR", tmp_dir / "cache"),
+            patch("html_to_share.time.sleep"),
+            patch("html_to_share.requests.get", return_value=stub_response),
+        ):
+            html_path, files_dir = fetch_page_with_surf(
+                "https://example.com/article"
+            )
+
+        # -- Verify at least one image was downloaded
+        downloaded = list(files_dir.iterdir())
+        assert len(downloaded) == 1
 
 
 if __name__ == "__main__":

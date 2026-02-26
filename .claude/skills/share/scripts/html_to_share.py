@@ -449,47 +449,223 @@ def markdown_to_html(md_text: str) -> str:
 </html>"""
 
 
-def main() -> None:
-    """Entry point: convert a browser-saved HTML file to a shareable page."""
-    if len(sys.argv) < 2:
-        logger.error("Usage: html_to_share.py <input.html>")
-        sys.exit(1)
+def _is_url(arg: str) -> bool:
+    """Check whether the argument looks like a URL rather than a file path."""
+    return arg.startswith("http://") or arg.startswith("https://")
 
-    input_path = Path(sys.argv[1]).resolve()
-    if not input_path.is_file():
-        logger.error("File not found: %s", input_path)
-        sys.exit(1)
 
-    logger.info("Processing: %s", input_path)
+def _slug_from_url(url: str) -> str:
+    """Derive a filesystem-safe slug from a URL for cache directory naming."""
+    parsed = urlparse(url)
+    # -- Combine host and path into a readable slug
+    raw = f"{parsed.netloc}{parsed.path}".rstrip("/")
+    # -- Replace non-alphanumeric chars with hyphens, collapse multiples
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", raw).strip("-").lower()
+    # -- Append a short hash for uniqueness
+    url_hash = hashlib.md5(url.encode()).hexdigest()[:8]  # noqa: S324
+    return f"{slug}-{url_hash}"
 
-    # -- Step 1: Auto-detect companion _files/ directory
-    files_dir = find_files_dir(input_path)
-    if files_dir:
-        logger.info("Found companion directory: %s", files_dir)
-    else:
-        logger.warning("No companion _files/ directory found — images won't be inlined")
 
-    # -- Step 2: Convert HTML → markdown via MarkItDown
+def _run_surf(args: list[str], *, timeout: int = 60) -> str:
+    """Run a surf CLI command and return its stdout.
+
+    Raises RuntimeError if surf fails or is not found.
+    """
+    cmd = ["surf", *args]
+    logger.debug("Running: %s", " ".join(cmd))
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        msg = "surf CLI not found — install it or use file mode instead"
+        raise RuntimeError(msg) from exc
+    except subprocess.TimeoutExpired as exc:
+        msg = f"surf command timed out after {timeout}s: {' '.join(cmd)}"
+        raise RuntimeError(msg) from exc
+
+    if result.returncode != 0:
+        logger.error("surf stderr: %s", result.stderr.strip())
+        msg = f"surf command failed (exit {result.returncode}): {' '.join(cmd)}"
+        raise RuntimeError(msg)
+
+    return result.stdout
+
+
+def fetch_page_with_surf(url: str) -> tuple[Path, Path | None]:
+    """Navigate to a URL with surf and download the page HTML + images.
+
+    Uses the user's live browser session (authentication/cookies preserved).
+    Returns (html_path, files_dir) in the cache directory.
+    """
+    slug = _slug_from_url(url)
+    page_dir = CACHE_DIR / slug
+    files_dir = page_dir / "images"
+    page_dir.mkdir(parents=True, exist_ok=True)
+    files_dir.mkdir(parents=True, exist_ok=True)
+
+    # -- Step 1: Navigate to the URL in the user's browser
+    logger.info("Navigating to %s via surf...", url)
+    _run_surf(["navigate", url], timeout=30)
+
+    # -- Step 2: Wait for page to settle (dynamic content, lazy images)
+    time.sleep(3)
+
+    # -- Step 3: Capture the fully-rendered HTML from the DOM
+    logger.info("Capturing rendered HTML...")
+    html_content = _run_surf(
+        ["js", "document.documentElement.outerHTML"],
+        timeout=15,
+    )
+    # -- surf js output may be JSON-encoded (quoted string); unwrap it
+    if html_content.startswith('"') and html_content.rstrip().endswith('"'):
+        try:
+            html_content = json.loads(html_content)
+        except json.JSONDecodeError:
+            pass
+
+    html_path = page_dir / "page.html"
+    html_path.write_text(html_content, encoding="utf-8")
+    logger.info("Saved HTML: %d chars", len(html_content))
+
+    # -- Step 4: Extract all image URLs from the page via JavaScript
+    logger.info("Extracting image URLs...")
+    js_extract = """
+    JSON.stringify(
+        [...document.querySelectorAll('img[src]')]
+            .map(i => i.src)
+            .filter(s => s.startsWith('http'))
+            .filter((v, i, a) => a.indexOf(v) === i)
+    )
+    """
+    img_urls_raw = _run_surf(["js", js_extract.strip()], timeout=15)
+    try:
+        img_urls = json.loads(img_urls_raw)
+        if isinstance(img_urls, str):
+            # -- Double-encoded: surf wrapped it in quotes
+            img_urls = json.loads(img_urls)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Could not parse image URLs from surf output")
+        img_urls = []
+
+    logger.info("Found %d image URLs", len(img_urls))
+
+    # -- Step 5: Download each image to the cache files directory
+    for img_url in img_urls:
+        try:
+            # -- Derive a filename from the URL path
+            parsed = urlparse(img_url)
+            filename = Path(parsed.path).name or "image"
+            # -- Avoid collisions by prefixing with a short hash
+            url_hash = hashlib.md5(img_url.encode()).hexdigest()[:6]  # noqa: S324
+            safe_name = f"{url_hash}-{filename}"
+            dest = files_dir / safe_name
+
+            if dest.exists():
+                continue
+
+            resp = requests.get(img_url, timeout=15)
+            resp.raise_for_status()
+            dest.write_bytes(resp.content)
+            logger.debug("Downloaded: %s -> %s", img_url, safe_name)
+        except Exception as exc:
+            logger.warning("Failed to download image %s: %s", img_url, exc)
+
+    logger.info("Downloaded images to %s", files_dir)
+    return html_path, files_dir
+
+
+def _inline_remote_images(md_text: str) -> tuple[str, int]:
+    """Download and inline any remaining remote image URLs as base64.
+
+    This handles images that weren't in the local _files/ directory —
+    typically from URL-mode where MarkItDown preserved absolute URLs.
+    """
+    count = 0
+    img_pattern = re.compile(r"!\[([^\]]*)\]\((https?://[^)]+)\)")
+
+    def _replace(match: re.Match) -> str:
+        nonlocal count
+        alt = match.group(1)
+        url = match.group(2)
+
+        try:
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.warning("Failed to fetch remote image %s: %s", url, exc)
+            return match.group(0)
+
+        try:
+            img = Image.open(io.BytesIO(resp.content))
+            if img.mode in ("RGBA", "P", "LA"):
+                img = img.convert("RGB")
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+
+            if img.width > MAX_IMAGE_WIDTH:
+                ratio = MAX_IMAGE_WIDTH / img.width
+                img = img.resize(
+                    (MAX_IMAGE_WIDTH, int(img.height * ratio)), Image.LANCZOS
+                )
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            count += 1
+            return f"![{alt}](data:image/jpeg;base64,{b64})"
+        except Exception as exc:
+            logger.warning("Failed to process remote image %s: %s", url, exc)
+            return match.group(0)
+
+    result = img_pattern.sub(_replace, md_text)
+    return result, count
+
+
+def process_html(
+    html_path: Path,
+    files_dir: Path | None,
+    output_path: Path,
+) -> tuple[Path, int]:
+    """Core pipeline: HTML → markdown → clean → inline images → styled HTML.
+
+    Returns (output_path, image_count).
+    """
+    # -- Convert HTML → markdown via MarkItDown
     converter = MarkItDown()
-    result = converter.convert(str(input_path))
+    result = converter.convert(str(html_path))
     md_text = result.text_content
     logger.info("Converted to markdown: %d characters", len(md_text))
 
-    # -- Step 3: Clean the markdown
+    # -- Clean the markdown
     md_text = clean_markdown(md_text)
     logger.info("Cleaned markdown: %d characters", len(md_text))
 
-    # -- Step 4: Inline local images as base64
+    # -- Inline local images as base64
     md_text, img_count = inline_images(md_text, files_dir)
-    logger.info("Inlined %d images", img_count)
+    logger.info("Inlined %d local images", img_count)
 
-    # -- Step 5: Convert to styled HTML
+    # -- Inline any remaining remote images (URL-mode leftovers)
+    md_text, remote_count = _inline_remote_images(md_text)
+    if remote_count:
+        logger.info("Inlined %d remote images", remote_count)
+    total_images = img_count + remote_count
+
+    # -- Convert to styled HTML
     html_output = markdown_to_html(md_text)
 
-    # -- Step 6: Write output next to the original
-    output_path = input_path.parent / f"{input_path.stem}-share.html"
+    # -- Write output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html_output, encoding="utf-8")
 
+    return output_path, total_images
+
+
+def _log_output_stats(output_path: Path, img_count: int) -> None:
+    """Log the output file path, size, and image count."""
     size_kb = output_path.stat().st_size / 1024
     size_unit = "KB" if size_kb < 1024 else "MB"
     size_display = size_kb if size_kb < 1024 else size_kb / 1024
@@ -497,6 +673,44 @@ def main() -> None:
     logger.info("Output: %s", output_path)
     logger.info("Size: %.1f %s", size_display, size_unit)
     logger.info("Images inlined: %d", img_count)
+
+
+def main() -> None:
+    """Entry point: convert a browser-saved HTML file or URL to a shareable page."""
+    if len(sys.argv) < 2:
+        logger.error("Usage: html_to_share.py <input.html | URL>")
+        sys.exit(1)
+
+    arg = sys.argv[1]
+
+    if _is_url(arg):
+        # -- URL mode: fetch with surf, then process
+        logger.info("URL mode: %s", arg)
+        html_path, files_dir = fetch_page_with_surf(arg)
+        slug = _slug_from_url(arg)
+        output_path = OUTPUT_DIR / f"{slug}-share.html"
+        output_path, img_count = process_html(html_path, files_dir, output_path)
+        _log_output_stats(output_path, img_count)
+    else:
+        # -- File mode: process local HTML with companion _files/ dir
+        input_path = Path(arg).resolve()
+        if not input_path.is_file():
+            logger.error("File not found: %s", input_path)
+            sys.exit(1)
+
+        logger.info("Processing: %s", input_path)
+
+        files_dir = find_files_dir(input_path)
+        if files_dir:
+            logger.info("Found companion directory: %s", files_dir)
+        else:
+            logger.warning(
+                "No companion _files/ directory found — images won't be inlined"
+            )
+
+        output_path = input_path.parent / f"{input_path.stem}-share.html"
+        output_path, img_count = process_html(input_path, files_dir, output_path)
+        _log_output_stats(output_path, img_count)
 
 
 if __name__ == "__main__":
