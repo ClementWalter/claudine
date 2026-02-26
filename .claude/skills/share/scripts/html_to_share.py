@@ -6,24 +6,36 @@
 #   "markdown>=3.5",
 #   "Pillow>=10.0",
 #   "beautifulsoup4>=4.12",
+#   "requests>=2.31",
 # ]
 # ///
-"""Convert a browser-saved HTML file into a self-contained, shareable HTML page.
+"""Convert a browser-saved HTML file or a URL into a self-contained, shareable HTML page.
 
-Takes a "Save As > Web Page, Complete" HTML file with its companion _files/
-directory and produces a single lightweight HTML with inlined base64 images,
-clean typography, and embedded CSS.
+Accepts either:
+- A local "Save As > Web Page, Complete" HTML file with its companion _files/ dir
+- A URL (http/https) — uses `surf` CLI to navigate with your browser session,
+  captures the rendered HTML, downloads images, and produces the output
+
+Outputs a single lightweight HTML with inlined base64 images, clean typography,
+and embedded CSS.
 """
 
 import base64
+import hashlib
 import io
+import json
 import logging
 import re
+import shutil
+import subprocess
 import sys
+import time
 import unicodedata
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 import markdown
+import requests
 from markitdown import MarkItDown
 from PIL import Image
 
@@ -34,6 +46,10 @@ logger = logging.getLogger(__name__)
 MAX_IMAGE_WIDTH = 1000
 # -- JPEG compression quality for inlined images
 JPEG_QUALITY = 72
+# -- Cache directory for URL-fetched pages
+CACHE_DIR = Path.home() / ".cache" / "share-skill"
+# -- Default output directory for URL-mode
+OUTPUT_DIR = Path.home() / "Desktop"
 
 # -- CSS for the output HTML: Georgia serif, centered, readable
 EMBEDDED_CSS = """\
