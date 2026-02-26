@@ -495,11 +495,142 @@ def _run_surf(args: list[str], *, timeout: int = 60) -> str:
     return result.stdout
 
 
+def _try_surf(args: list[str], *, timeout: int = 60) -> str | None:
+    """Run a surf CLI command, returning None on failure instead of raising."""
+    try:
+        return _run_surf(args, timeout=timeout)
+    except RuntimeError:
+        return None
+
+
+def _find_tab_for_url(url: str) -> str | None:
+    """Find the tab ID for a URL by listing open tabs.
+
+    Returns the tab ID string if found, None otherwise.
+    """
+    output = _try_surf(["tab.list"], timeout=10)
+    if output is None:
+        return None
+
+    # -- tab.list format: "<tab_id>\t<title>\t<url>"
+    for line in output.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3 and url in parts[2]:
+            return parts[0]
+    return None
+
+
+def _surf_with_tab(tab_id: str, args: list[str], *, timeout: int = 60) -> str:
+    """Run a surf command targeting a specific tab."""
+    return _run_surf(["--tab-id", tab_id, *args], timeout=timeout)
+
+
+def _try_surf_with_tab(
+    tab_id: str, args: list[str], *, timeout: int = 60
+) -> str | None:
+    """Run a surf command targeting a specific tab, None on failure."""
+    try:
+        return _surf_with_tab(tab_id, args, timeout=timeout)
+    except RuntimeError:
+        return None
+
+
+def _capture_screenshot_base64(
+    page_dir: Path, *, tab_id: str | None = None
+) -> str | None:
+    """Take a screenshot via surf and return it as a base64 JPEG data URI.
+
+    Saves the raw PNG to page_dir for caching, returns compressed JPEG base64.
+    """
+    screenshot_path = page_dir / "screenshot.png"
+    args = ["screenshot", "--path", str(screenshot_path)]
+    if tab_id:
+        args = ["--tab-id", tab_id] + args[:]
+        # -- Reconstruct: surf --tab-id <id> screenshot --path <path>
+        args = ["--tab-id", tab_id, "screenshot", "--path", str(screenshot_path)]
+
+    output = _try_surf(args, timeout=15)
+    if output is None:
+        return None
+
+    # -- surf saves to its own path; find the actual file from output
+    # -- Output: "Saved to /tmp/surf-snap-<ts>.png (...)"
+    saved_path = screenshot_path
+    for line in output.splitlines():
+        if line.startswith("Saved to "):
+            actual_path = line.split("Saved to ", 1)[1].split(" (")[0].strip()
+            saved_path = Path(actual_path)
+            break
+
+    if not saved_path.is_file():
+        return None
+
+    # -- Compress to JPEG and encode as base64
+    try:
+        with Image.open(saved_path) as img:
+            if img.mode in ("RGBA", "P", "LA"):
+                img = img.convert("RGB")
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85, optimize=True)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            return f"data:image/jpeg;base64,{b64}"
+    except Exception as exc:
+        logger.warning("Failed to process screenshot: %s", exc)
+        return None
+
+
+def _build_screenshot_html(
+    title: str,
+    page_text: str,
+    screenshot_b64: str,
+) -> str:
+    """Build a shareable HTML page from a screenshot and extracted text.
+
+    Used as fallback when JS execution is blocked by the target site.
+    """
+    # -- Clean the page text: remove element references like [e1], [cursor=...]
+    cleaned_lines = []
+    for line in page_text.splitlines():
+        # -- Skip accessibility tree lines (element descriptors)
+        if re.match(r"^\s*(button|link|img|generic|tab|treeitem|listitem|slider)\s", line):
+            continue
+        if re.match(r"^\s*\[Viewport:", line):
+            continue
+        if re.match(r"^\s*---\s*Page Text\s*---", line):
+            continue
+        cleaned_lines.append(line)
+    body_text = "\n".join(cleaned_lines).strip()
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+{EMBEDDED_CSS}
+img {{ border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.15); }}
+.page-text {{ margin-top: 2rem; padding: 1.5rem; background: #f8f8f8;
+  border-radius: 8px; font-size: 0.95rem; white-space: pre-wrap; }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+<img src="{screenshot_b64}" alt="Page screenshot">
+{f'<div class="page-text">{body_text}</div>' if body_text else ''}
+</body>
+</html>"""
+
+
 def fetch_page_with_surf(url: str) -> tuple[Path, Path | None]:
     """Navigate to a URL with surf and download the page HTML + images.
 
     Uses the user's live browser session (authentication/cookies preserved).
     Returns (html_path, files_dir) in the cache directory.
+
+    Falls back to screenshot-based capture when JS execution is blocked.
     """
     slug = _slug_from_url(url)
     page_dir = CACHE_DIR / slug
@@ -514,52 +645,99 @@ def fetch_page_with_surf(url: str) -> tuple[Path, Path | None]:
     # -- Step 2: Wait for page to settle (dynamic content, lazy images)
     time.sleep(3)
 
-    # -- Step 3: Capture the fully-rendered HTML from the DOM
-    logger.info("Capturing rendered HTML...")
-    html_content = _run_surf(
-        ["js", "document.documentElement.outerHTML"],
-        timeout=15,
-    )
-    # -- surf js output may be JSON-encoded (quoted string); unwrap it
-    if html_content.startswith('"') and html_content.rstrip().endswith('"'):
-        try:
-            html_content = json.loads(html_content)
-        except json.JSONDecodeError:
-            pass
+    # -- Step 2b: Find the correct tab (navigate may not focus it for surf)
+    tab_id = _find_tab_for_url(url)
+    if tab_id:
+        logger.info("Found tab %s for URL", tab_id)
 
+    # -- Step 3: Try JS-based HTML capture first
+    logger.info("Capturing rendered HTML...")
+    html_content = None
+    if tab_id:
+        html_content = _try_surf_with_tab(
+            tab_id, ["js", "document.documentElement.outerHTML"], timeout=15
+        )
+    if html_content is None:
+        html_content = _try_surf(
+            ["js", "document.documentElement.outerHTML"], timeout=15
+        )
+
+    if html_content is not None:
+        # -- JS worked: full HTML capture path
+        if html_content.startswith('"') and html_content.rstrip().endswith('"'):
+            try:
+                html_content = json.loads(html_content)
+            except json.JSONDecodeError:
+                pass
+
+        html_path = page_dir / "page.html"
+        html_path.write_text(html_content, encoding="utf-8")
+        logger.info("Saved HTML: %d chars", len(html_content))
+
+        # -- Extract image URLs via JS
+        logger.info("Extracting image URLs...")
+        js_extract = """
+        JSON.stringify(
+            [...document.querySelectorAll('img[src]')]
+                .map(i => i.src)
+                .filter(s => s.startsWith('http'))
+                .filter((v, i, a) => a.indexOf(v) === i)
+        )
+        """
+        img_urls_raw = None
+        if tab_id:
+            img_urls_raw = _try_surf_with_tab(
+                tab_id, ["js", js_extract.strip()], timeout=15
+            )
+        if img_urls_raw is None:
+            img_urls_raw = _try_surf(["js", js_extract.strip()], timeout=15)
+
+        img_urls = []
+        if img_urls_raw:
+            try:
+                img_urls = json.loads(img_urls_raw)
+                if isinstance(img_urls, str):
+                    img_urls = json.loads(img_urls)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Could not parse image URLs from surf output")
+
+        logger.info("Found %d image URLs", len(img_urls))
+        _download_images(img_urls, files_dir)
+        return html_path, files_dir
+
+    # -- Step 4: JS blocked — fall back to screenshot + page.read
+    logger.warning("JS execution blocked — falling back to screenshot mode")
+
+    page_text = ""
+    if tab_id:
+        page_text = _try_surf_with_tab(tab_id, ["page.read"], timeout=15) or ""
+    if not page_text:
+        page_text = _try_surf(["page.read"], timeout=15) or ""
+
+    screenshot_b64 = _capture_screenshot_base64(page_dir, tab_id=tab_id)
+    if screenshot_b64 is None:
+        msg = "Could not capture page — both JS and screenshot failed"
+        raise RuntimeError(msg)
+
+    # -- Build title from URL or page text
+    parsed = urlparse(url)
+    title = parsed.netloc + parsed.path.rstrip("/")
+
+    html_content = _build_screenshot_html(title, page_text, screenshot_b64)
     html_path = page_dir / "page.html"
     html_path.write_text(html_content, encoding="utf-8")
-    logger.info("Saved HTML: %d chars", len(html_content))
+    logger.info("Built screenshot-based HTML: %d chars", len(html_content))
 
-    # -- Step 4: Extract all image URLs from the page via JavaScript
-    logger.info("Extracting image URLs...")
-    js_extract = """
-    JSON.stringify(
-        [...document.querySelectorAll('img[src]')]
-            .map(i => i.src)
-            .filter(s => s.startsWith('http'))
-            .filter((v, i, a) => a.indexOf(v) === i)
-    )
-    """
-    img_urls_raw = _run_surf(["js", js_extract.strip()], timeout=15)
-    try:
-        img_urls = json.loads(img_urls_raw)
-        if isinstance(img_urls, str):
-            # -- Double-encoded: surf wrapped it in quotes
-            img_urls = json.loads(img_urls)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("Could not parse image URLs from surf output")
-        img_urls = []
+    # -- No companion images dir needed for screenshot mode
+    return html_path, None
 
-    logger.info("Found %d image URLs", len(img_urls))
 
-    # -- Step 5: Download each image to the cache files directory
+def _download_images(img_urls: list[str], files_dir: Path) -> None:
+    """Download a list of image URLs into the given directory."""
     for img_url in img_urls:
         try:
-            # -- Derive a filename from the URL path
             parsed = urlparse(img_url)
             filename = Path(parsed.path).name or "image"
-            # -- Avoid collisions by prefixing with a short hash
             url_hash = hashlib.md5(img_url.encode()).hexdigest()[:6]  # noqa: S324
             safe_name = f"{url_hash}-{filename}"
             dest = files_dir / safe_name
@@ -575,7 +753,6 @@ def fetch_page_with_surf(url: str) -> tuple[Path, Path | None]:
             logger.warning("Failed to download image %s: %s", img_url, exc)
 
     logger.info("Downloaded images to %s", files_dir)
-    return html_path, files_dir
 
 
 def _inline_remote_images(md_text: str) -> tuple[str, int]:

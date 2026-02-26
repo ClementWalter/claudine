@@ -28,11 +28,14 @@ from PIL import Image
 # -- Import the module under test
 sys.path.insert(0, str(Path(__file__).parent))
 from html_to_share import (
+    _build_screenshot_html,
+    _find_tab_for_url,
     _inline_remote_images,
     _is_url,
     _log_output_stats,
     _run_surf,
     _slug_from_url,
+    _try_surf,
     clean_markdown,
     fetch_page_with_surf,
     find_files_dir,
@@ -497,19 +500,109 @@ class TestProcessHtml:
         assert "No Images" in content
 
 
+# -- Tests for _try_surf
+
+
+class TestTrySurf:
+    def test_returns_none_on_failure(self):
+        """Should return None instead of raising on failure."""
+        with patch(
+            "html_to_share.subprocess.run",
+            side_effect=FileNotFoundError("No such file"),
+        ):
+            assert _try_surf(["navigate", "https://example.com"]) is None
+
+    def test_returns_stdout_on_success(self):
+        """Should return stdout when command succeeds."""
+        stub_result = MagicMock()
+        stub_result.returncode = 0
+        stub_result.stdout = "OK"
+        with patch("html_to_share.subprocess.run", return_value=stub_result):
+            assert _try_surf(["navigate", "https://example.com"]) == "OK"
+
+
+# -- Tests for _find_tab_for_url
+
+
+class TestFindTabForUrl:
+    def test_finds_matching_tab(self):
+        """Should return tab ID when URL matches."""
+        tab_output = (
+            "123\tExample Page\thttps://example.com/article\n"
+            "456\tOther Page\thttps://other.com\n"
+        )
+        stub_result = MagicMock()
+        stub_result.returncode = 0
+        stub_result.stdout = tab_output
+        with patch("html_to_share.subprocess.run", return_value=stub_result):
+            assert _find_tab_for_url("https://example.com/article") == "123"
+
+    def test_returns_none_when_not_found(self):
+        """Should return None when no tab matches."""
+        tab_output = "456\tOther Page\thttps://other.com\n"
+        stub_result = MagicMock()
+        stub_result.returncode = 0
+        stub_result.stdout = tab_output
+        with patch("html_to_share.subprocess.run", return_value=stub_result):
+            assert _find_tab_for_url("https://example.com/missing") is None
+
+
+# -- Tests for _build_screenshot_html
+
+
+class TestBuildScreenshotHtml:
+    def test_produces_valid_html(self):
+        """Should produce HTML with screenshot image and title."""
+        html = _build_screenshot_html(
+            "Test Page", "Some page text", "data:image/jpeg;base64,abc123"
+        )
+        assert "<!DOCTYPE html>" in html
+        assert "Test Page" in html
+        assert "data:image/jpeg;base64,abc123" in html
+
+    def test_includes_page_text(self):
+        """Should include cleaned page text in output."""
+        html = _build_screenshot_html(
+            "Title", "Hello world content", "data:image/jpeg;base64,x"
+        )
+        assert "Hello world content" in html
+
+    def test_strips_accessibility_tree_lines(self):
+        """Should remove element refs from accessibility tree output."""
+        page_text = (
+            'button "click me" [e1] [cursor=pointer]\n'
+            "[Viewport: 1360x1059]\n"
+            "--- Page Text ---\n"
+            "Actual content here"
+        )
+        html = _build_screenshot_html(
+            "Title", page_text, "data:image/jpeg;base64,x"
+        )
+        assert "button" not in html
+        assert "Viewport" not in html
+        assert "Actual content here" in html
+
+
 # -- Tests for fetch_page_with_surf
 
 
 class TestFetchPageWithSurf:
-    def test_creates_cache_directory_and_html(self, tmp_dir):
-        """Should create cache dir, save HTML, and download images."""
-        # -- Stub all surf calls
+    def test_js_mode_creates_html_and_images(self, tmp_dir):
+        """When JS works: should save HTML and download images."""
+
         def stub_run_surf(args, *, timeout=60):
-            if args[0] == "navigate":
+            # -- Handle --tab-id prefixed calls
+            if args[0] == "--tab-id":
+                actual_args = args[2:]  # skip --tab-id <id>
+            else:
+                actual_args = args
+            if actual_args[0] == "navigate":
                 return ""
-            if args[0] == "js" and "outerHTML" in args[1]:
+            if actual_args[0] == "tab.list":
+                return "999\tTest\thttps://example.com/article\n"
+            if actual_args[0] == "js" and "outerHTML" in actual_args[1]:
                 return '"<html><body><h1>Test</h1></body></html>"'
-            if args[0] == "js":
+            if actual_args[0] == "js":
                 return json.dumps([])
             return ""
 
@@ -524,43 +617,58 @@ class TestFetchPageWithSurf:
 
         assert html_path.exists()
         assert files_dir.is_dir()
-        content = html_path.read_text()
-        assert "<h1>Test</h1>" in content
+        assert "<h1>Test</h1>" in html_path.read_text()
 
-    def test_downloads_images_from_page(self, tmp_dir):
-        """Should download images found in the page."""
-        # -- Create a stub image for the HTTP response
-        img = Image.new("RGB", (50, 50), color="blue")
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG")
-        jpeg_bytes = buf.getvalue()
+    def test_screenshot_fallback_when_js_blocked(self, tmp_dir):
+        """When JS fails: should fall back to screenshot-based capture."""
+        # -- Create a stub screenshot PNG
+        img = Image.new("RGB", (800, 600), color="grey")
+        screenshot_dir = tmp_dir / "screenshots"
+        screenshot_dir.mkdir()
+
+        call_count = {"screenshot": 0}
 
         def stub_run_surf(args, *, timeout=60):
-            if args[0] == "navigate":
+            # -- Handle --tab-id prefixed calls
+            if args[0] == "--tab-id":
+                actual_args = args[2:]
+            else:
+                actual_args = args
+            if actual_args[0] == "navigate":
                 return ""
-            if args[0] == "js" and "outerHTML" in args[1]:
-                return '"<html><body><img src=\\"https://cdn.example.com/pic.jpg\\"></body></html>"'
-            if args[0] == "js":
-                return json.dumps(["https://cdn.example.com/pic.jpg"])
+            if actual_args[0] == "tab.list":
+                return "999\tTest\thttps://example.com/blocked\n"
+            if actual_args[0] == "js":
+                # -- Simulate JS being blocked
+                raise RuntimeError("surf command failed")
+            if actual_args[0] == "page.read":
+                return "--- Page Text ---\nSome article text"
+            if actual_args[0] == "screenshot":
+                # -- Save a real image to the path surf would use
+                for i, a in enumerate(actual_args):
+                    if a == "--path":
+                        save_path = Path(actual_args[i + 1])
+                        save_path.parent.mkdir(parents=True, exist_ok=True)
+                        img.save(str(save_path), "PNG")
+                        return f"Saved to {save_path} (800x600)"
+                return ""
             return ""
-
-        stub_response = MagicMock()
-        stub_response.content = jpeg_bytes
-        stub_response.raise_for_status = MagicMock()
 
         with (
             patch("html_to_share._run_surf", side_effect=stub_run_surf),
             patch("html_to_share.CACHE_DIR", tmp_dir / "cache"),
             patch("html_to_share.time.sleep"),
-            patch("html_to_share.requests.get", return_value=stub_response),
         ):
             html_path, files_dir = fetch_page_with_surf(
-                "https://example.com/article"
+                "https://example.com/blocked"
             )
 
-        # -- Verify at least one image was downloaded
-        downloaded = list(files_dir.iterdir())
-        assert len(downloaded) == 1
+        assert html_path.exists()
+        # -- Screenshot mode returns None for files_dir
+        assert files_dir is None
+        content = html_path.read_text()
+        assert "data:image/jpeg;base64," in content
+        assert "Some article text" in content
 
 
 if __name__ == "__main__":
