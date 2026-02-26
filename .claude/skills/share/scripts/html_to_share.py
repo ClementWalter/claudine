@@ -866,7 +866,19 @@ def main() -> None:
         html_path, files_dir = fetch_page_with_surf(arg)
         slug = _slug_from_url(arg)
         output_path = OUTPUT_DIR / f"{slug}-share.html"
-        output_path, img_count = process_html(html_path, files_dir, output_path)
+
+        if files_dir is None:
+            # -- Screenshot fallback: HTML already has embedded screenshot
+            #    image — skip MarkItDown pipeline, just copy to output
+            logger.info("Screenshot mode — copying pre-built HTML to output")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(html_path, output_path)
+            img_count = 1  # the screenshot itself
+        else:
+            # -- JS mode: run full MarkItDown pipeline
+            output_path, img_count = process_html(
+                html_path, files_dir, output_path
+            )
         _log_output_stats(output_path, img_count)
     else:
         # -- File mode: process local HTML with companion _files/ dir
