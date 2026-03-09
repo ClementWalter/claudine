@@ -2,6 +2,10 @@
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "permissions": {
     "defaultMode": "dontAsk"
   },
@@ -38,12 +42,9 @@
       }
     ]
   },
-  "skipDangerousModePermissionPrompt": true,
   "enabledPlugins": {
     "rust-analyzer-lsp@claude-plugins-official": true
   },
-  "attribution": {
-    "commit": "",
-    "pr": ""
-  }
+  "skipDangerousModePermissionPrompt": true,
+  "effortLevel": "high"
 }
