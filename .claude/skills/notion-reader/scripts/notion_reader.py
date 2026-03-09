@@ -111,14 +111,27 @@ def _get_token() -> str:
 
 
 def _notion_request(endpoint: str, payload: dict, token: str) -> dict:
-    """Make an authenticated request to Notion's internal API."""
+    """Make an authenticated request to Notion's internal API.
+
+    Uses the same headers and cookies a browser session would send,
+    including the Notion-specific audit log header required by the v3 API.
+    """
     resp = requests.post(
         f"{NOTION_API_BASE}/{endpoint}",
         json=payload,
         cookies={"token_v2": token},
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "accept": "application/json",
+            "accept-language": "en-US,en;q=0.9",
+            # Notion's internal API requires this header for authenticated calls
+            "notion-audit-log-platform": "web",
+            "notion-client-version": "23.13.0.2",
         },
         timeout=30,
     )
