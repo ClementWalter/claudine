@@ -217,6 +217,88 @@ of names.
 - **Timestamps**: message timestamps (`ts`) are displayed as `YYYY-MM-DD HH:MM`
   UTC
 
+## Channel Summary Workflow
+
+When the user asks to summarize a Slack channel (e.g., "summarize #business
+since Feb 27"), follow this procedure:
+
+### 1. Resolve channel ID and start date
+
+- If the user gives a channel name, resolve the ID:
+  ```bash
+  slack_user_cli channels --all 2>&1 | grep -i "<channel_name>"
+  ```
+- If the channel name isn't found (e.g., cross-workspace channel), ask the user
+  for a sample message link from that channel to extract the channel ID
+  (`C...` from the URL).
+- If no start date is provided, **ask the user** for one before proceeding.
+
+### 2. Read channel messages from the start date
+
+```bash
+slack_user_cli read <channel_id> --limit 100
+```
+
+- Filter the output to messages on or after the start date.
+- Identify every top-level message that has `[N replies]` — these are threads.
+- Also note standalone messages (no replies) that contain decisions or actions.
+
+### 3. Read each thread
+
+For each threaded message, use the `url` command with a constructed permalink.
+The permalink format is:
+```
+https://<workspace>.slack.com/archives/<channel_id>/p<ts_without_dot>
+```
+
+To convert a displayed timestamp like `1772191041.209019` to a permalink `p`
+value, remove the dot: `p1772191041209019`.
+
+**However**, the `read` command output doesn't show raw timestamps. Instead,
+use `search` to find the thread starter message and get its context, then use
+the `url` command:
+
+```bash
+# Find thread by searching for unique keywords from the message
+slack_user_cli search "<unique phrase from message> in:<channel_name>" --count 3
+
+# Read the full thread via permalink
+slack_user_cli url "https://zama-ai.slack.com/archives/<channel_id>/p<ts>"
+```
+
+**If `url` fails** with `thread_not_found`, fall back to `search` with
+targeted keywords to retrieve thread replies:
+
+```bash
+slack_user_cli search "<topic keywords> in:<channel_name>" --count 15
+```
+
+### 4. Summarize each thread
+
+For each thread, produce a structured summary:
+
+- **Topic**: One-line description
+- **Decisions taken**: What was agreed upon
+- **Pending / Open questions**: Unresolved items
+- **Next steps / Action items**: Who does what
+- **Codebase relevance**: How it relates to the current project (contracts,
+  SDK, protocol, etc.) — only include if applicable
+
+### 5. Cross-cutting summary
+
+After all threads, add a cross-cutting table of **technical issues** that span
+multiple threads, with columns: Issue | Impact | Status.
+
+### Tips
+
+- The `read` command returns messages newest-first by default. Increase
+  `--limit` if the start date is far back.
+- Search is more reliable than `read` for finding specific messages and their
+  thread replies. Use `in:<channel_name>` to scope searches.
+- Watch for Slack API rate limits. If you hit `ratelimited`, wait a few seconds
+  and retry.
+- For large channels, process threads in batches of 3-5 to avoid rate limits.
+
 ## Troubleshooting
 
 - **"Not logged in"**: run `slack_user_cli login --browser` or `--manual`
