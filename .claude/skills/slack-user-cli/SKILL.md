@@ -88,6 +88,10 @@ slack_user_cli user-channels <user_name_or_id> --type "public_channel,private_ch
 
 ### Writing
 
+**CRITICAL: When drafting messages for the user, read and follow the tone guide
+in `~/.claude/skills/slack-user-cli/TONE.md`.** Match the user's natural voice:
+casual, humble, concrete, no marketing-speak.
+
 **CRITICAL: Before sending any message to a main channel (i.e. a `send` command
 WITHOUT `--thread`), you MUST use `AskUserQuestion` to get explicit approval.**
 Posting to a main channel is visible to everyone and cannot be undone. Always
