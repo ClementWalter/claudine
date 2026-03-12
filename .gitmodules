@@ -31,3 +31,6 @@
 [submodule "/Users/clementwalter/Documents/claudine/external/surf-cli"]
 	path = /Users/clementwalter/Documents/claudine/external/surf-cli
 	url = git@github.com:nicobailon/surf-cli.git
+[submodule "/Users/clementwalter/Documents/claudine/external/cli"]
+	path = /Users/clementwalter/Documents/claudine/external/cli
+	url = https://github.com/googleworkspace/cli
